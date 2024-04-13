@@ -74,7 +74,7 @@ def main():
     # Get root folder
     content = service_instance.RetrieveContent()
     datacenter = content.rootFolder.childEntity[0]
-    cluster_name = "WormHole" 
+    cluster_name = "Istanbul" 
 
     # Find cluster by name
     cluster = None
