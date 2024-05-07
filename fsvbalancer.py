@@ -8,9 +8,9 @@ import datetime
 def connect_to_vcenter(host, username, password):
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
     context.verify_mode = ssl.CERT_NONE
-    service_instance = SmartConnect(host=host, user=username, pwd=password, sslContext=context)
-    atexit.register(Disconnect, service_instance)
-    return service_instance
+    vcenter = SmartConnect(host=host, user=username, pwd=password, sslContext=context)
+    atexit.register(Disconnect, vcenter)
+    return vcenter
 
 # Calculate basic resource usages from hypervisor host
 def calculate_host_resources(host):
@@ -69,10 +69,10 @@ def log_migration_details(migration_info):
 # Main function
 def main():
     # Connect to vSphere
-    service_instance = connect_to_vcenter("vcenter.fatihsolen.com", "fatihsolen", "*******")
+    vcenter = connect_to_vcenter("vcenter.fatihsolen.com", "fatihsolen", "*******")
 
     # Get root folder
-    content = service_instance.RetrieveContent()
+    content = vcenter.RetrieveContent()
     datacenter = content.rootFolder.childEntity[0]
     cluster_name = "Istanbul" 
 
