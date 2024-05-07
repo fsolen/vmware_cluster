@@ -8,9 +8,9 @@ import datetime
 def connect_to_vcenter(host, username, password):
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
     context.verify_mode = ssl.CERT_NONE
-    service_instance = SmartConnect(host=host, user=username, pwd=password, sslContext=context)
-    atexit.register(Disconnect, service_instance)
-    return service_instance
+    vcenter = SmartConnect(host=host, user=username, pwd=password, sslContext=context)
+    atexit.register(Disconnect, vcenter)
+    return vcenter
 
 # Calculate datastore usage for a specific VM
 def calculate_vm_datastore_usage(vm):
@@ -80,8 +80,8 @@ def log_datastore_usage(datastore_usage):
 
 # Main function
 def main():
-    service_instance = connect_to_vcenter("vcenter.fatihsolen.com", "fatihsolen", "*******")
-    content = service_instance.RetrieveContent()
+    vcenter = connect_to_vcenter("vcenter.fatihsolen.com", "fatihsolen", "*******")
+    content = vcenter.RetrieveContent()
     datacenter = content.rootFolder.childEntity[0]
     cluster_name = "ist"
 
