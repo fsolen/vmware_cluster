@@ -1,21 +1,41 @@
-from pyVim import connect
+import yaml
+from pyVim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
 
-def connect_to_vcenter(host, username, password):
-    try:
-        vcenter = connect.SmartConnectNoSSL(host=host, user=username, pwd=password)
-        return vcenter
-    except Exception as e:
-        print(f"Error connecting to vCenter Server: {str(e)}")
-        return None
+class vCenterConnector:
+    def __init__(self, config_file):
+        self.config_file = config_file
+        self.service_instance = None
 
-def disconnect_from_vcenter(vcenter):
-    try:
-        if vcenter:
-            connect.Disconnect(vcenter)
-            print("Disconnected from vCenter Server.")
-    except Exception as e:
-        print(f"Error disconnecting from vCenter Server: {str(e)}")
+    def connect(self):
+        with open(self.config_file, 'r') as f:
+            config = yaml.safe_load(f)
+
+        host = config['host']
+        username = config['username']
+        password = config['password']
+
+        context = None
+        if hasattr(ssl, "_create_unverified_context"):
+            context = ssl._create_unverified_context()
+
+        try:
+            self.service_instance = SmartConnect(host=host,
+                                                  user=username,
+                                                  pwd=password,
+                                                  sslContext=context)
+            return True
+        except Exception as e:
+            print("Unable to connect to vCenter:", str(e))
+            return False
+
+    def disconnect(self):
+        try:
+            if self.service_instance:
+                Disconnect(self.service_instance)
+                print("Disconnected from vCenter")
+        except Exception as e:
+            print("Error disconnecting from vCenter:", str(e))
 
 def get_host_metrics(vcenter):
     host_metrics = {}
@@ -54,7 +74,8 @@ def migrate_vm(vm, destination_host):
         return None
 
 def main():
-    vcenter = connect_to_vcenter("vcenter.fatihsolen.com", "fatihsolen", "*******")
+    vcenter_config_file = "vcenter01_config.yaml"
+    vcenter_connector = vCenterConnector(vcenter_config_file)
     
     if vcenter:
         try:
@@ -88,7 +109,7 @@ def main():
             
         finally:
             # Disconnect from vCenter Server
-            disconnect_from_vcenter(vcenter)
+            vcenter_connector.disconnect()
 
 if __name__ == "__main__":
     main()
