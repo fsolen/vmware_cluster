@@ -77,10 +77,10 @@ def main():
     vcenter_config_file = "vcenter01_config.yaml"
     vcenter_connector = vCenterConnector(vcenter_config_file)
     
-    if vcenter:
+    if vcenter_connector.connect():  # Corrected the variable name
         try:
             # Get host metrics
-            host_metrics = get_host_metrics(vcenter)
+            host_metrics = get_host_metrics(vcenter_connector.service_instance)  # Corrected the variable name
             
             if host_metrics:
                 # Identify top utilized host
@@ -88,7 +88,7 @@ def main():
                 print(f"Top Utilized Host: {top_host}")
 
                 # Migrate VMs from the top utilized host to other hosts in the cluster
-                content = vcenter.RetrieveContent()
+                content = vcenter_connector.service_instance.RetrieveContent()  # Corrected the variable name
                 container_view = content.viewManager.CreateContainerView(content.rootFolder,
                                                                          [vim.VirtualMachine],
                                                                          True)
