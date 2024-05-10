@@ -59,7 +59,7 @@ def get_vm_metrics(vcenter):
     except Exception as e:
         print(f"Error retrieving VM metrics: {str(e)}")
         return None
-        
+
 def get_host_metrics(vcenter):
     host_metrics = {}
     try:
@@ -90,21 +90,21 @@ def migrate_vm_to_host(vm_name, host_name, service_instance):
         content = service_instance.RetrieveContent()
         vm_obj = None
         host_obj = None
-        
+
         # Find the VM object by name
         container = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
         for item in container.view:
             if item.name == vm_name:
                 vm_obj = item
                 break
-        
+
         # Find the host object by name
         host_container = content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True)
         for item in host_container.view:
             if item.name == host_name:
                 host_obj = item
                 break
-        
+
         # Perform VM migration
         if vm_obj and host_obj:
             task = vm_obj.Migrate(host=host_obj, priority=vim.VirtualMachine.MovePriority.highPriority)
@@ -124,48 +124,53 @@ def main():
 
     if vcenter_connector.connect():
         try:
-            # Get VM metrics
-            vm_metrics = get_vm_metrics(vcenter_connector.service_instance)
-            if not vm_metrics:
-                print("Failed to retrieve VM metrics. Exiting.")
-                return
-
-            # Get host metrics
+            # Get initial host metrics
             host_metrics = get_host_metrics(vcenter_connector.service_instance)
             if not host_metrics:
                 print("Failed to retrieve host metrics. Exiting.")
                 return
 
-            # Perform what-if analysis
-            for vm, (vm_cpu_usage, vm_memory_usage) in vm_metrics.items():
-                print(f"\nWhat-if analysis for VM: {vm}")
+            # Perform what-if analysis and migrate VMs one by one with a 1-minute interval
+            vm_metrics = get_vm_metrics(vcenter_connector.service_instance)
+            if not vm_metrics:
+                print("Failed to retrieve VM metrics. Exiting.")
+                return
+
+            while vm_metrics:
+                # Initialize variables for tracking best host
                 best_host = None
-                lowest_host_score = float('inf')  # Initialize to positive infinity
+                lowest_host_utilization = float('inf')  # Initialize to positive infinity
 
-                for host, (cpu_capacity, memory_capacity) in host_metrics.items():
-                    new_host_cpu_utilization = cpu_capacity + vm_cpu_usage
-                    new_host_memory_utilization = memory_capacity + vm_memory_usage
-                    cpu_utilization_ratio = new_host_cpu_utilization / cpu_capacity
-                    memory_utilization_ratio = new_host_memory_utilization / memory_capacity
-                    host_score = max(cpu_utilization_ratio, memory_utilization_ratio)
+                # Iterate over VMs to find the next VM to migrate
+                for vm, (vm_cpu_usage, vm_memory_usage) in vm_metrics.items():
+                    print(f"\nWhat-if analysis for VM: {vm}")
+                    # Calculate the best host for the current VM
+                    for host, (cpu_capacity, memory_capacity) in host_metrics.items():
+                        new_host_cpu_utilization = cpu_capacity + vm_cpu_usage
+                        new_host_memory_utilization = memory_capacity + vm_memory_usage
+                        host_utilization = max(new_host_cpu_utilization / cpu_capacity, new_host_memory_utilization / memory_capacity)
 
-                    if host_score < lowest_host_score:
-                        best_host = host
-                        lowest_host_score = host_score
+                        if host_utilization < lowest_host_utilization and host != vm_metrics[vm]:  # Skip if the VM is already on the best host
+                            best_host = host
+                            lowest_host_utilization = host_utilization
 
-                if best_host:
-                    print(f"Best host for VM {vm}: {best_host} (CPU Utilization: {host_metrics[best_host][0]}%, Memory Utilization: {host_metrics[best_host][1]}%)")
-                    # Migrate VM to the best host
-                    migrate_vm_to_host(vm, best_host, vcenter_connector.service_instance)  # Pass service_instance here
-                    print(f"Migrated VM {vm} to host {best_host}. Waiting 1 minute before recalculating host balance.")
-                    time.sleep(60)  # Wait for 1 minute before recalculating host balance
-                    # Recalculate host metrics
-                    host_metrics = get_host_metrics(vcenter_connector.service_instance)
-                    if not host_metrics:
-                        print("Failed to retrieve host metrics after migration. Exiting.")
-                        break
-                else:
-                    print(f"No suitable host found for VM {vm}")
+                    if best_host:
+                        # Migrate VM to the best host
+                        migrate_vm_to_host(vm, best_host, vcenter_connector.service_instance)
+                        print(f"Migrated VM {vm} to host {best_host}. Waiting 1 minute before recalculating host balance.")
+                        time.sleep(60)  # Wait for 1 minute before recalculating host balance
+
+                        # Remove the migrated VM from the metrics
+                        del vm_metrics[vm]
+
+                        # Update host metrics after migration
+                        host_metrics = get_host_metrics(vcenter_connector.service_instance)
+                        if not host_metrics:
+                            print("Failed to retrieve host metrics after migration. Exiting.")
+                            return
+                        break  # Move to the next VM after migration
+                    else:
+                        print(f"No suitable host found for VM {vm}")
 
         finally:
             vcenter_connector.disconnect()
