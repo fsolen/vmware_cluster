@@ -1,4 +1,5 @@
 import ssl
+import time
 import yaml
 from pyVim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
@@ -38,9 +39,29 @@ class vCenterConnector:
         except Exception as e:
             print("Error disconnecting from vCenter:", str(e))
 
+def get_vm_metrics(vcenter):
+    vm_metrics = {}
+    try:
+        content = vcenter.RetrieveContent()
+        container_view = content.viewManager.CreateContainerView(content.rootFolder,
+                                                                 [vim.VirtualMachine],
+                                                                 True)
+        vms = container_view.view
+
+        for vm in vms:
+            if vm.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
+                summary = vm.summary
+                cpu_usage = summary.quickStats.overallCpuUsage
+                memory_usage = summary.quickStats.guestMemoryUsage
+                vm_metrics[vm.name] = (cpu_usage, memory_usage)
+
+        return vm_metrics
+    except Exception as e:
+        print(f"Error retrieving VM metrics: {str(e)}")
+        return None
+        
 def get_host_metrics(vcenter):
     host_metrics = {}
-    host_objects = {}
     try:
         content = vcenter.RetrieveContent()
         container_view = content.viewManager.CreateContainerView(content.rootFolder,
@@ -50,35 +71,52 @@ def get_host_metrics(vcenter):
 
         for host in hosts:
             summary = host.summary
-            cpu_usage = summary.quickStats.overallCpuUsage
-            cpu_capacity = host.hardware.cpuInfo.numCpuCores * host.hardware.cpuInfo.hz
-            cpu_utilization = (cpu_usage / cpu_capacity) * 100
+            cpu_utilization = summary.quickStats.overallCpuUsage
+            cpu_capacity = host.hardware.cpuInfo.hz / 1000000  # Convert Hz to MHz
 
-            memory_usage = summary.quickStats.overallMemoryUsage
-            memory_capacity = host.hardware.memorySize
-            memory_utilization = (memory_usage / memory_capacity) * 100
+            memory_utilization = summary.quickStats.overallMemoryUsage
+            memory_capacity = host.hardware.memorySize / (1024 * 1024)  # Convert bytes to megabytes
 
-            host_metrics[host.name] = (cpu_utilization, memory_utilization)
-            host_objects[host.name] = host  # Map host names to HostSystem objects
 
-        return host_metrics, host_objects
+            host_metrics[host.name] = (cpu_capacity, memory_capacity)
+
+        return host_metrics
     except Exception as e:
         print(f"Error retrieving host metrics: {str(e)}")
-        return None, None
-
-def migrate_vm(vm, destination_host):
-    try:
-        # Create RelocateSpec object
-        relocate_spec = vim.vm.RelocateSpec()
-        relocate_spec.host = destination_host  # Set the destination host
-
-        # Perform VM relocation
-        task = vm.Relocate(relocate_spec)
-        return task
-    except Exception as e:
-        print(f"Error migrating VM: {str(e)}")
         return None
 
+def migrate_vm_to_host(vm_name, host_name, service_instance):
+    try:
+        content = service_instance.RetrieveContent()
+        vm_obj = None
+        host_obj = None
+        
+        # Find the VM object by name
+        container = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
+        for item in container.view:
+            if item.name == vm_name:
+                vm_obj = item
+                break
+        
+        # Find the host object by name
+        host_container = content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True)
+        for item in host_container.view:
+            if item.name == host_name:
+                host_obj = item
+                break
+        
+        # Perform VM migration
+        if vm_obj and host_obj:
+            task = vm_obj.Migrate(host=host_obj, priority=vim.VirtualMachine.MovePriority.highPriority)
+            task_result = task.waitForTask()
+            if task_result == vim.TaskInfo.State.success:
+                print(f"Successfully migrated VM {vm_name} to host {host_name}")
+            else:
+                print(f"Failed to migrate VM {vm_name} to host {host_name}. Task result: {task_result}")
+        else:
+            print(f"Failed to find VM {vm_name} or host {host_name}")
+    except Exception as e:
+        print(f"Error migrating VM {vm_name} to host {host_name}: {str(e)}")
 
 def main():
     vcenter_config_file = "vcenter01_config.yaml"
@@ -86,44 +124,50 @@ def main():
 
     if vcenter_connector.connect():
         try:
+            # Get VM metrics
+            vm_metrics = get_vm_metrics(vcenter_connector.service_instance)
+            if not vm_metrics:
+                print("Failed to retrieve VM metrics. Exiting.")
+                return
+
             # Get host metrics
-            host_metrics, host_objects = get_host_metrics(vcenter_connector.service_instance)
+            host_metrics = get_host_metrics(vcenter_connector.service_instance)
+            if not host_metrics:
+                print("Failed to retrieve host metrics. Exiting.")
+                return
 
-            if host_metrics and host_objects:
-                # Identify top utilized host
-                top_host_name = max(host_metrics, key=lambda x: sum(host_metrics[x]))
-                top_host = host_objects.get(top_host_name)  # Retrieve HostSystem object
+            # Perform what-if analysis
+            for vm, (vm_cpu_usage, vm_memory_usage) in vm_metrics.items():
+                print(f"\nWhat-if analysis for VM: {vm}")
+                best_host = None
+                lowest_host_score = float('inf')  # Initialize to positive infinity
 
-                if top_host:
-                    print(f"Top Utilized Host: {top_host_name}")
+                for host, (cpu_capacity, memory_capacity) in host_metrics.items():
+                    new_host_cpu_utilization = cpu_capacity + vm_cpu_usage
+                    new_host_memory_utilization = memory_capacity + vm_memory_usage
+                    cpu_utilization_ratio = new_host_cpu_utilization / cpu_capacity
+                    memory_utilization_ratio = new_host_memory_utilization / memory_capacity
+                    host_score = max(cpu_utilization_ratio, memory_utilization_ratio)
 
-                    # Migrate VMs from the top utilized host to other hosts in the cluster
-                    content = vcenter_connector.service_instance.RetrieveContent()
-                    container_view = content.viewManager.CreateContainerView(content.rootFolder,
-                                                                             [vim.VirtualMachine],
-                                                                             True)
-                    vms = container_view.view
+                    if host_score < lowest_host_score:
+                        best_host = host
+                        lowest_host_score = host_score
 
-                    for vm_obj in vms:
-                        if isinstance(vm_obj, vim.VirtualMachine):
-                            vm = vm_obj
-                            if vm.runtime.host.name == top_host_name:
-                                least_utilized_host_name = min(host_metrics, key=lambda x: sum(host_metrics[x]))
-                                least_utilized_host = host_objects.get(least_utilized_host_name)
-                                if least_utilized_host and least_utilized_host_name != top_host_name:
-                                    # Migrate VM to the least utilized host
-                                    task = migrate_vm(vm, least_utilized_host)
-                                    if task:
-                                        print(f"Migrating VM {vm.name} to {least_utilized_host_name}")
-                                        # Wait for migration task to complete
-                                        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
-                                            pass
-                        else:
-                            print(f"Encountered unexpected object type: {type(vm_obj)}")
-
+                if best_host:
+                    print(f"Best host for VM {vm}: {best_host} (CPU Utilization: {host_metrics[best_host][0]}%, Memory Utilization: {host_metrics[best_host][1]}%)")
+                    # Migrate VM to the best host
+                    migrate_vm_to_host(vm, best_host, vcenter_connector.service_instance)  # Pass service_instance here
+                    print(f"Migrated VM {vm} to host {best_host}. Waiting 1 minute before recalculating host balance.")
+                    time.sleep(60)  # Wait for 1 minute before recalculating host balance
+                    # Recalculate host metrics
+                    host_metrics = get_host_metrics(vcenter_connector.service_instance)
+                    if not host_metrics:
+                        print("Failed to retrieve host metrics after migration. Exiting.")
+                        break
+                else:
+                    print(f"No suitable host found for VM {vm}")
 
         finally:
-            # Disconnect from vCenter Server
             vcenter_connector.disconnect()
 
 if __name__ == "__main__":
