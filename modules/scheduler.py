@@ -1,24 +1,59 @@
-from pyVmomi import vim
-from modules.logger import Logger
+import logging
+import time
 
-logger = Logger()
+logger = logging.getLogger('fdrs')
 
 class Scheduler:
-    def __init__(self, service_instance, migration_planner, dry_run=False):
-        self.service_instance = service_instance
-        self.migration_planner = migration_planner
+    def __init__(self, connection_manager, dry_run=False):
+        self.connection_manager = connection_manager
         self.dry_run = dry_run
+        self.si = connection_manager.si  # Service Instance
 
-    def execute_migrations(self):
+    def execute_migrations(self, migrations):
         """
-        Perform vMotion migrations or dry-run based on the `dry_run` flag.
+        Perform or simulate the VM migrations.
         """
-        logger.info("Executing migrations... Dry-run mode: " + ("Enabled" if self.dry_run else "Disabled"))
-        if self.dry_run:
-            logger.info("Performing dry-run: No actual migrations will be performed.")
+        if not migrations:
+            logger.info("[Scheduler] No migrations to perform.")
+            return
+
+        mode = "DRY-RUN" if self.dry_run else "REAL"
+        logger.info(f"[Scheduler] Executing {len(migrations)} planned migrations. Mode: {mode}")
+
+        for vm, target_host in migrations:
+            try:
+                if self.dry_run:
+                    logger.info(f"[DRY-RUN] Would migrate VM '{vm.name}' ➔ Host '{target_host.name}'")
+                else:
+                    self._migrate_vm(vm, target_host)
+            except Exception as e:
+                logger.error(f"[Scheduler] Failed to migrate VM '{vm.name}': {str(e)}")
+
+    def _migrate_vm(self, vm, target_host):
+        """
+        Actually migrate a VM to another host using vMotion.
+        """
+        logger.info(f"[Scheduler] Starting migration of VM '{vm.name}' ➔ '{target_host.name}'")
+
+        relocate_spec = vim.vm.RelocateSpec()
+        relocate_spec.host = target_host.ref  # Host reference
+        relocate_spec.pool = target_host.resource_pool  # Optional: Assign resource pool
+
+        task = vm.ref.Relocate(relocate_spec)
+
+        self._wait_for_task(task, f"Migrating {vm.name}")
+
+        logger.info(f"[Scheduler] Migration of VM '{vm.name}' to '{target_host.name}' completed successfully.")
+
+    def _wait_for_task(self, task, action_name):
+        """
+        Wait for a vCenter task to complete.
+        """
+        logger.debug(f"[Scheduler] Waiting for task: {action_name}...")
+        while task.info.state == 'running':
+            time.sleep(1)
+
+        if task.info.state == 'success':
+            logger.debug(f"[Scheduler] Task '{action_name}' completed successfully.")
         else:
-            logger.info("Performing live migrations...")
-            # Placeholder logic for live migration using pyVmomi's vMotion
-            for cluster_name, vms in self.migration_planner.cluster_state.items():
-                logger.success(f"Migration of VMs in {cluster_name} completed.")
-
+            raise Exception(f"Task '{action_name}' failed: {task.info.error}")
