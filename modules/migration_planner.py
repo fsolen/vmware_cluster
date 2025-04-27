@@ -1,79 +1,128 @@
-from pyVmomi import vim
-from modules.logger import Logger
-from modules.connection_manager import ConnectionManager
+import logging
 
-logger = Logger()
+logger = logging.getLogger('fdrs')
 
-class MigrationManager:
-    """
-    Manages the migration of VMs based on the affinity/anti-affinity distribution
-    """
+class MigrationPlanner:
+    def __init__(self, cluster_state, constraint_manager, aggressiveness=3):
+        self.cluster_state = cluster_state
+        self.constraint_manager = constraint_manager
+        self.aggressiveness = aggressiveness
 
-    def __init__(self, service_instance, vm_to_cluster_map, dry_run=False):
-        self.service_instance = service_instance
-        self.vm_to_cluster_map = vm_to_cluster_map
-        self.dry_run = dry_run
-
-    def _migrate_vm(self, vm, target_cluster):
+    def plan_migrations(self):
         """
-        Migrate a VM to a new cluster using vMotion
-        :param vm: The VM object to migrate
-        :param target_cluster: The target cluster to migrate the VM to
+        Main function to decide which VMs should move where.
+        Returns a list of (VM, TargetHost) tuples.
         """
-        try:
-            if self.dry_run:
-                logger.info(f"[DRY-RUN] Would migrate VM {vm.name} to cluster {target_cluster}")
-                return
+        logger.info("[MigrationPlanner] Planning migrations...")
+        migrations = []
 
-            # Fetch the target cluster object
-            clusters = self.service_instance.content.viewManager.CreateContainerView(
-                self.service_instance.content.rootFolder, [vim.ClusterComputeResource], True
-            )
-            target_cluster_obj = None
-            for cluster in clusters.view:
-                if cluster.name == target_cluster:
-                    target_cluster_obj = cluster
-                    break
+        imbalance_hosts = self._detect_imbalanced_hosts()
 
-            if not target_cluster_obj:
-                logger.error(f"Target cluster {target_cluster} not found.")
-                return
+        # Handle Anti-Affinity violations first
+        anti_affinity_violations = self.constraint_manager.validate_anti_affinity()
+        for vm_name in anti_affinity_violations:
+            vm = self.cluster_state.get_vm_by_name(vm_name)
+            preferred_host = self.constraint_manager.get_preferred_host_for_vm(vm)
+            if preferred_host:
+                migrations.append((vm, preferred_host))
+                logger.info(f"[MigrationPlanner] Anti-Affinity fix planned: Move '{vm.name}' ➔ '{preferred_host.name}'")
 
-            # Start the migration using vMotion
-            logger.info(f"Migrating VM {vm.name} to cluster {target_cluster}...")
-            task = vm.Relocate(vm.config, vim.VirtualMachineMovePriority.defaultPriority, target_cluster_obj)
-            task_result = task.info.state
+        # Handle Load imbalance
+        for host in imbalance_hosts:
+            overloaded_vms = self._select_vms_to_move(host)
+            for vm in overloaded_vms:
+                target_host = self._find_better_host(vm, current_host=host)
+                if target_host:
+                    migrations.append((vm, target_host))
+                    logger.info(f"[MigrationPlanner] Load fix planned: Move '{vm.name}' from '{host.name}' ➔ '{target_host.name}'")
+        
+        if not migrations:
+            logger.info("[MigrationPlanner] No migrations needed. Cluster is healthy.")
 
-            if task_result == vim.TaskInfo.State.success:
-                logger.success(f"VM {vm.name} successfully migrated to cluster {target_cluster}.")
-            else:
-                logger.error(f"VM {vm.name} migration to cluster {target_cluster} failed.")
+        return migrations
 
-        except Exception as e:
-            logger.error(f"Error during migration of VM {vm.name}: {e}")
-
-    def perform_migrations(self):
+    def _detect_imbalanced_hosts(self):
         """
-        Iterates over each VM in the cluster distribution and migrates them
-        based on the anti-affinity rule
+        Find hosts that are overloaded based on CPU, Memory, Disk IO, Network IO.
+        Aggressiveness factor (1-5) controls sensitivity.
         """
-        for cluster, vms in self.vm_to_cluster_map.items():
-            for vm in vms:
-                self._migrate_vm(vm, cluster)
+        overloaded_hosts = []
+        logger.info("[MigrationPlanner] Detecting overloaded hosts...")
+        for host in self.cluster_state.hosts:
+            if self._is_overloaded(host):
+                overloaded_hosts.append(host)
+                logger.debug(f"[MigrationPlanner] Host '{host.name}' is overloaded.")
 
-    def dry_run(self):
-        """
-        Executes a dry-run of the migration process without making any actual changes
-        """
-        logger.info("[DRY-RUN] Migration dry-run: no actual migration will be performed.")
-        self.perform_migrations()
+        return overloaded_hosts
 
-    def run(self):
+    def _is_overloaded(self, host):
         """
-        Executes the migration process (or dry-run) based on the --dry-run flag
+        Determine if a host is overloaded.
+        Thresholds become stricter with higher aggressiveness.
         """
-        if self.dry_run:
-            self.dry_run()
-        else:
-            self.perform_migrations()
+        cpu_threshold = 70 - (self.aggressiveness * 5)  # eg. aggressiveness 3 => 55%
+        mem_threshold = 75 - (self.aggressiveness * 5)
+        disk_threshold = 80 - (self.aggressiveness * 5)
+        net_threshold = 80 - (self.aggressiveness * 5)
 
+        return (host.cpu_usage > cpu_threshold or
+                host.memory_usage > mem_threshold or
+                host.disk_io_usage > disk_threshold or
+                host.network_io_usage > net_threshold)
+
+    def _select_vms_to_move(self, host):
+        """
+        From an overloaded host, pick a few VMs that are heavy (CPU, Memory, IO).
+        """
+        heavy_vms = sorted(
+            host.vms,
+            key=lambda vm: (vm.cpu_usage + vm.memory_usage + vm.disk_io_usage + vm.network_io_usage),
+            reverse=True
+        )
+        # Pick top 1-3 heavy VMs depending on aggressiveness
+        count = min(self.aggressiveness, len(heavy_vms))
+        return heavy_vms[:count]
+
+    def _find_better_host(self, vm, current_host):
+        """
+        Search for a better host for the given VM.
+        """
+        candidates = []
+
+        for host in self.cluster_state.hosts:
+            if host.name == current_host.name:
+                continue  # Skip current host
+            if self._would_fit(vm, host):
+                score = self._score_host_for_vm(vm, host)
+                candidates.append((score, host))
+
+        if not candidates:
+            logger.warning(f"[MigrationPlanner] No better host found for VM '{vm.name}'.")
+            return None
+
+        # Pick host with best score
+        candidates.sort(reverse=True)
+        best_host = candidates[0][1]
+        return best_host
+
+    def _would_fit(self, vm, host):
+        """
+        Check if the VM would reasonably fit into host without making it overloaded.
+        """
+        projected_cpu = host.cpu_usage + vm.cpu_usage
+        projected_mem = host.memory_usage + vm.memory_usage
+        projected_disk = host.disk_io_usage + vm.disk_io_usage
+        projected_net = host.network_io_usage + vm.network_io_usage
+
+        return (projected_cpu < 90 and projected_mem < 90 and
+                projected_disk < 90 and projected_net < 90)
+
+    def _score_host_for_vm(self, vm, host):
+        """
+        Higher score = better candidate. Score based on how much free resources host has.
+        """
+        cpu_score = 100 - host.cpu_usage
+        mem_score = 100 - host.memory_usage
+        disk_score = 100 - host.disk_io_usage
+        net_score = 100 - host.network_io_usage
+        return cpu_score + mem_score + disk_score + net_score
