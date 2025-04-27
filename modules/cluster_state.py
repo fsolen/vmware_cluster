@@ -1,7 +1,6 @@
 from pyVmomi import vim
 from modules.logger import Logger
 
-# Create a logger instance
 logger = Logger()
 
 class ClusterState:
