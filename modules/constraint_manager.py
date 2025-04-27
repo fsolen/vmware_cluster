@@ -1,79 +1,79 @@
-from collections import defaultdict
-from modules.logger import Logger
+import logging
 
-logger = Logger()
+logger = logging.getLogger('fdrs')
 
 class ConstraintManager:
-    """
-    Manages Anti-Affinity rules and distribution of VMs across clusters based on hostname prefixes
-    """
+    def __init__(self, cluster_state):
+        self.cluster_state = cluster_state
+        self.vm_distribution = {}
 
-    def __init__(self, service_instance):
-        self.service_instance = service_instance
-        self.vm_to_cluster_map = defaultdict(list)
-
-    def get_vms(self):
+    def enforce_anti_affinity(self):
         """
-        Fetches all VMs in vCenter and their respective clusters.
-        :return: A list of VMs with cluster information
+        Automatically groups VMs by prefix (ignoring last 2 chars)
+        and tries to ensure VMs with same prefix are spread across hosts.
         """
-        vms = []
-        clusters = self.service_instance.content.viewManager.CreateContainerView(
-            self.service_instance.content.rootFolder, [vim.ClusterComputeResource], True
-        )
+        logger.info("[ConstraintManager] Enforcing automatic Anti-Affinity rules...")
+        self.vm_distribution = {}
 
-        for cluster in clusters.view:
-            for host in cluster.host:
-                for vm in host.vm:
-                    vms.append({"vm": vm, "cluster": cluster.name, "host": host.name})
-        return vms
+        # Build groups of VMs by common prefix
+        for vm in self.cluster_state.vms:
+            short_name = vm.name[:-2]  # Remove last 2 characters
+            if short_name not in self.vm_distribution:
+                self.vm_distribution[short_name] = []
+            self.vm_distribution[short_name].append(vm)
 
-    def apply_affinity_rules(self, vms):
+        logger.debug("[ConstraintManager] Grouped VMs by prefix: {}".format(
+            {k: [vm.name for vm in vms] for k, vms in self.vm_distribution.items()}
+        ))
+
+    def validate_anti_affinity(self):
         """
-        Apply the anti-affinity rule for VM distribution based on hostname prefixes.
-        Distribute VMs across clusters evenly.
-        :param vms: List of VMs to be processed
-        :return: Updated mapping of VMs to clusters
+        Validate if VMs sharing prefix are located on different hosts.
+        Returns list of VM names violating the rule.
         """
-        # Group VMs by their hostname prefix (excluding the last 2 characters)
-        vm_groups = defaultdict(list)
-        for vm_info in vms:
-            vm_name = vm_info["vm"].name
-            prefix = vm_name[:-2]  # Exclude the last 2 characters from the hostname
-            vm_groups[prefix].append(vm_info)
+        logger.info("[ConstraintManager] Validating Anti-Affinity violations...")
+        violations = []
 
-        # Distribute VMs evenly across available clusters
-        available_clusters = list(set(vm_info["cluster"] for vm_info in vms))
-        for prefix, group_vms in vm_groups.items():
-            logger.info(f"Applying anti-affinity rule for prefix: {prefix}")
-            
-            cluster_idx = 0  # Start from the first cluster and distribute evenly
-            for vm_info in group_vms:
-                cluster = available_clusters[cluster_idx]
-                self.vm_to_cluster_map[cluster].append(vm_info["vm"])
-                logger.info(f"VM: {vm_info['vm'].name} assigned to cluster: {cluster}")
-                cluster_idx = (cluster_idx + 1) % len(available_clusters)
+        for prefix, vms in self.vm_distribution.items():
+            host_set = set()
+            for vm in vms:
+                host_name = self.cluster_state.get_host_of_vm(vm)
+                if not host_name:
+                    continue  # Ignore VMs with no host
+                if host_name in host_set:
+                    logger.warning("[ConstraintManager] Violation: Prefix '{}' has multiple VMs on host '{}'".format(prefix, host_name))
+                    violations.append(vm.name)
+                else:
+                    host_set.add(host_name)
 
-        return self.vm_to_cluster_map
+        if not violations:
+            logger.info("[ConstraintManager] No Anti-Affinity violations detected.")
+        else:
+            logger.info("[ConstraintManager] Found {} Anti-Affinity violations.".format(len(violations)))
 
-    def display_vm_distribution(self):
+        return violations
+
+    def get_preferred_host_for_vm(self, vm):
         """
-        Displays the current distribution of VMs across clusters
+        Given a VM, suggest a host to move it based on Anti-Affinity rules.
+        Prefer a host not hosting same-prefix siblings.
         """
-        logger.info("Current VM Distribution:")
-        for cluster, vms in self.vm_to_cluster_map.items():
-            logger.info(f"Cluster: {cluster}, VMs: {[vm.name for vm in vms]}")
+        short_name = vm.name[:-2]
+        sibling_vms = self.vm_distribution.get(short_name, [])
 
-    def apply(self):
-        """
-        Main method to run the affinity/anti-affinity rule and display results.
-        """
-        # Step 1: Get all VMs and their current cluster assignments
-        vms = self.get_vms()
+        # Get list of hosts already hosting siblings
+        occupied_hosts = set()
+        for sibling in sibling_vms:
+            if sibling.name == vm.name:
+                continue  # skip itself
+            host = self.cluster_state.get_host_of_vm(sibling)
+            if host:
+                occupied_hosts.add(host)
 
-        # Step 2: Apply anti-affinity rule and distribute VMs across clusters
-        self.apply_affinity_rules(vms)
+        # Suggest a host not in occupied_hosts
+        for host in self.cluster_state.hosts:
+            if host.name not in occupied_hosts:
+                return host
 
-        # Step 3: Display the final distribution of VMs
-        self.display_vm_distribution()
-
+        logger.warning("[ConstraintManager] No free host found for VM '{}' to avoid Anti-Affinity violation.".format(vm.name))
+        return None  # fallback if no better host found
