@@ -3,6 +3,7 @@
 import argparse
 import logging
 import sys
+from modules.banner import print_banner
 from modules.connection_manager import ConnectionManager
 from modules.resource_monitor import ResourceMonitor
 from modules.constraint_manager import ConstraintManager
@@ -11,6 +12,7 @@ from modules.load_evaluator import LoadEvaluator
 from modules.migration_planner import MigrationPlanner
 from modules.scheduler import Scheduler
 from modules.logger import Logger
+
 logger = Logger()
 
 def parse_args():
@@ -27,6 +29,9 @@ def parse_args():
     return parser.parse_args()
 
 def main():
+    # Print the banner
+    print_banner()
+
     args = parse_args()
 
     # Connect to vCenter
@@ -72,4 +77,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"An error occurred: {e}")
         sys.exit(1)
-
