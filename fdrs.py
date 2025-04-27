@@ -9,7 +9,7 @@ from modules.resource_monitor import ResourceMonitor
 from modules.constraint_manager import ConstraintManager
 from modules.cluster_state import ClusterState
 from modules.load_evaluator import LoadEvaluator
-from modules.migration_planner import MigrationPlanner
+from modules.migration_planner import MigrationManager
 from modules.scheduler import Scheduler
 from modules.logger import Logger
 
