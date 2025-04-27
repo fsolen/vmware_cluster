@@ -75,5 +75,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error("An error occurred: {}".format(e))
         sys.exit(1)
