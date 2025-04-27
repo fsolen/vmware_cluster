@@ -1,1 +1,3 @@
-VMware Cluster Level Operations
+FDRS - Fully Dynamic Resource Scheduler
+
+I am working on detailed documentation... 
