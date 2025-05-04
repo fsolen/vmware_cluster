@@ -12,35 +12,54 @@ class ResourceMonitor:
     def __init__(self, service_instance):
         self.service_instance = service_instance
         self.performance_manager = service_instance.content.perfManager
+        self.counter_map = self._build_counter_map()
 
-    def _get_performance_data(self, entity, metric_id, interval=20):
+    def _build_counter_map(self):
+        """
+        Builds a map of performance counter names to IDs.
+        """
+        counter_map = {}
+        perf_dict = {}
+        perfList = self.performance_manager.perfCounter
+        for counter in perfList:
+            perf_dict[counter.groupInfo.key + "." + counter.nameInfo.key] = counter.key
+        counter_map['cpu.usage'] = perf_dict.get('cpu.usage')
+        counter_map['mem.usage'] = perf_dict.get('mem.usage')
+        counter_map['disk.usage'] = perf_dict.get('disk.usage')
+        counter_map['net.usage'] = perf_dict.get('net.usage')
+        return counter_map
+
+    def _get_performance_data(self, entity, metric_name, interval=20):
         """
         Fetches the performance data for a specific entity (VM or Host).
         :param entity: The VM or Host object
-        :param metric_id: The metric ID to be fetched (CPU, Memory, etc.)
+        :param metric_name: The metric name to be fetched (CPU, Memory, etc.)
         :param interval: The sampling interval in seconds (default 20s)
         :return: A list of metric data
         """
         try:
-            counter_info = self.performance_manager.queryAvailablePerfMetric(entity=entity)
-            metric_id_list = [metric.counterId for metric in counter_info if metric.counterId == metric_id]
-            if not metric_id_list:
-                logger.warning(f"Metric ID {metric_id} not found!")
+            metric_id = self.counter_map.get(metric_name)
+            if not metric_id:
+                logger.warning(f"Metric {metric_name} not found in counter map!")
                 return None
 
-            metrics = self.performance_manager.queryPerf(
-                entity=entity,
-                metricId=metric_id_list,
-                intervalId=interval,
-                maxSample=1  # Only take the latest sample
+            metrics = self.performance_manager.QueryPerf(
+                querySpec=[
+                    vim.PerformanceManager.QuerySpec(
+                        entity=entity,
+                        metricId=[vim.PerformanceManager.MetricId(counterId=metric_id, instance='')],
+                        intervalId=interval,
+                        maxSample=1  # Only take the latest sample
+                    )
+                ]
             )
 
-            if metrics:
+            if metrics and metrics[0].value:
                 return metrics[0].value
             return None
 
         except Exception as e:
-            logger.error(f"Error fetching performance data: {e}")
+            logger.error(f"Error fetching performance data for {metric_name}: {e}")
             return None
 
     def get_vm_metrics(self, vm):
@@ -51,29 +70,24 @@ class ResourceMonitor:
         """
         vm_metrics = {}
 
-        # CPU
-        cpu_metric_id = 6  # CPU usage metric ID
-        cpu_usage = self._get_performance_data(vm, cpu_metric_id)
-        if cpu_usage:
-            vm_metrics['CPU Usage (MHz)'] = cpu_usage[0]
+        # Define metrics to fetch
+        metrics = {
+            "CPU Usage (MHz)": "cpu.usage",
+            "Memory Usage (MB)": "mem.usage",
+            "Disk IO (MB/s)": "disk.usage",
+            "Network IO (MB/s)": "net.usage"
+        }
 
-        # Memory
-        memory_metric_id = 24  # Memory usage metric ID
-        memory_usage = self._get_performance_data(vm, memory_metric_id)
-        if memory_usage:
-            vm_metrics['Memory Usage (MB)'] = memory_usage[0]
-
-        # Disk I/O
-        disk_metric_id = 15  # Disk Read/Write I/O metric ID
-        disk_io = self._get_performance_data(vm, disk_metric_id)
-        if disk_io:
-            vm_metrics['Disk IO (MB/s)'] = disk_io[0]
-
-        # Network I/O
-        net_metric_id = 16  # Network usage metric ID
-        net_io = self._get_performance_data(vm, net_metric_id)
-        if net_io:
-            vm_metrics['Network IO (MB/s)'] = net_io[0]
+        for metric_name, metric_key in metrics.items():
+            metric_data = self._get_performance_data(vm, metric_key)
+            if metric_data and len(metric_data) > 0:
+                # Convert units if necessary
+                if metric_name == "Memory Usage (MB)":
+                    vm_metrics[metric_name] = metric_data[0].value / 1024.0  # Assuming data is in KB
+                else:
+                    vm_metrics[metric_name] = metric_data[0].value
+            else:
+                vm_metrics[metric_name] = None  # Handle missing data gracefully
 
         return vm_metrics
 
@@ -85,29 +99,24 @@ class ResourceMonitor:
         """
         host_metrics = {}
 
-        # CPU
-        cpu_metric_id = 6  # CPU usage metric ID
-        cpu_usage = self._get_performance_data(host, cpu_metric_id)
-        if cpu_usage:
-            host_metrics['CPU Usage (MHz)'] = cpu_usage[0]
+        # Define metrics to fetch
+        metrics = {
+            "CPU Usage (MHz)": "cpu.usage",
+            "Memory Usage (MB)": "mem.usage",
+            "Disk IO (MB/s)": "disk.usage",
+            "Network IO (MB/s)": "net.usage"
+        }
 
-        # Memory
-        memory_metric_id = 24  # Memory usage metric ID
-        memory_usage = self._get_performance_data(host, memory_metric_id)
-        if memory_usage:
-            host_metrics['Memory Usage (MB)'] = memory_usage[0]
-
-        # Disk I/O
-        disk_metric_id = 15  # Disk Read/Write I/O metric ID
-        disk_io = self._get_performance_data(host, disk_metric_id)
-        if disk_io:
-            host_metrics['Disk IO (MB/s)'] = disk_io[0]
-
-        # Network I/O
-        net_metric_id = 16  # Network usage metric ID
-        net_io = self._get_performance_data(host, net_metric_id)
-        if net_io:
-            host_metrics['Network IO (MB/s)'] = net_io[0]
+        for metric_name, metric_key in metrics.items():
+            metric_data = self._get_performance_data(host, metric_key)
+            if metric_data and len(metric_data) > 0:
+                # Convert units if necessary
+                if metric_name == "Memory Usage (MB)":
+                    host_metrics[metric_name] = metric_data[0].value / 1024.0  # Assuming data is in KB
+                else:
+                    host_metrics[metric_name] = metric_data[0].value
+            else:
+                host_metrics[metric_name] = None  # Handle missing data gracefully
 
         return host_metrics
 
