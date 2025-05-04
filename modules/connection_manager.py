@@ -48,6 +48,9 @@ class ConnectionManager:
         """
         Disconnects from vCenter
         """
-        if self.service_instance:
-            connect.Disconnect(self.service_instance)
-            logger.info("Disconnected from vCenter cleanly.")
+    try:
+            if self.service_instance:
+                connect.Disconnect(self.service_instance)
+                logger.info("Disconnected from vCenter cleanly.")
+        except Exception as e:
+            logger.error(f"Error during disconnection: {e}")
