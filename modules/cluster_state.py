@@ -21,10 +21,11 @@ class ClusterState:
         cluster_state = {}
 
         for datacenter in content.rootFolder.childEntity:
-            for cluster in datacenter.hostFolder.childEntity:
-                if isinstance(cluster, vim.ClusterComputeResource):
-                    vms = [vm.name for vm in cluster.resourcePool.vm]
-                    cluster_state[cluster.name] = vms
+            if isinstance(datacenter, vim.Datacenter):
+                for cluster in datacenter.hostFolder.childEntity:
+                    if isinstance(cluster, vim.ClusterComputeResource):
+                        vms = [vm.name for vm in cluster.resourcePool.vm]
+                        cluster_state[cluster.name] = vms
 
         logger.info("Cluster state fetched successfully.")
         return cluster_state
