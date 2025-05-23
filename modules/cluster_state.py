@@ -43,3 +43,17 @@ class ClusterState:
 
         logger.info("Cluster state fetched successfully.")
         return cluster_state
+        
+    def get_host_of_vm(self, vm):
+        """
+        Given a VM object, return the name of the host it is running on.
+        """
+        try:
+            if hasattr(vm, 'runtime') and hasattr(vm.runtime, 'host') and vm.runtime.host:
+                return vm.runtime.host.name
+            else:
+                logger.warning(f"VM '{vm.name}' does not have a valid host reference.")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting host for VM '{getattr(vm, 'name', str(vm))}': {e}")
+            return None
