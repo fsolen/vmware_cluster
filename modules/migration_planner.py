@@ -109,23 +109,17 @@ class MigrationManager:
         return best_host
 
     def _would_fit(self, vm, host):
-        """
-        Check if the VM would reasonably fit into host without making it overloaded.
-        """
-        projected_cpu = host.cpu_usage + vm.cpu_usage
-        projected_mem = host.memory_usage + vm.memory_usage
-        projected_disk = host.disk_io_usage + vm.disk_io_usage
-        projected_net = host.network_io_usage + vm.network_io_usage
-
-        return (projected_cpu < 90 and projected_mem < 90 and
-                projected_disk < 90 and projected_net < 90)
+        metrics = self.cluster_state.host_metrics.get(host.name, {})
+        projected_cpu = metrics.get('cpu_usage', 0) + getattr(vm, 'cpu_usage', 0)
+        projected_mem = metrics.get('memory_usage', 0) + getattr(vm, 'memory_usage', 0)
+        projected_disk = metrics.get('disk_io_usage', 0) + getattr(vm, 'disk_io_usage', 0)
+        projected_net = metrics.get('network_io_usage', 0) + getattr(vm, 'network_io_usage', 0)
+        return (projected_cpu < 90 and projected_mem < 90 and projected_disk < 90 and projected_net < 90)
 
     def _score_host_for_vm(self, vm, host):
-        """
-        Higher score = better candidate. Score based on how much free resources host has.
-        """
-        cpu_score = 100 - host.cpu_usage
-        mem_score = 100 - host.memory_usage
-        disk_score = 100 - host.disk_io_usage
-        net_score = 100 - host.network_io_usage
+        metrics = self.cluster_state.host_metrics.get(host.name, {})
+        cpu_score = 100 - metrics.get('cpu_usage', 0)
+        mem_score = 100 - metrics.get('memory_usage', 0)
+        disk_score = 100 - metrics.get('disk_io_usage', 0)
+        net_score = 100 - metrics.get('network_io_usage', 0)
         return cpu_score + mem_score + disk_score + net_score
