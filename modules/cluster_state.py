@@ -6,6 +6,20 @@ logger = Logger()
 class ClusterState:
     def __init__(self, service_instance):
         self.service_instance = service_instance
+        self.vms = self._get_all_vms()
+
+    def _get_all_vms(self):
+        """
+        Return a flat list of all VM objects in all clusters in all datacenters.
+        """
+        vms = []
+        content = self.service_instance.RetrieveContent()
+        for datacenter in content.rootFolder.childEntity:
+            if hasattr(datacenter, 'vmFolder'):
+                vm_view = content.viewManager.CreateContainerView(datacenter.vmFolder, [vim.VirtualMachine], True)
+                vms.extend(vm_view.view)
+                vm_view.Destroy()
+        return vms
 
     def get_cluster_state(self):
         """
