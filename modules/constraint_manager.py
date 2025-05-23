@@ -77,3 +77,10 @@ class ConstraintManager:
 
         logger.warning("[ConstraintManager] No free host found for VM '{}' to avoid Anti-Affinity violation.".format(vm.name))
         return None  # fallback if no better host found
+        
+    def apply(self):
+        """
+        Apply anti-affinity rules (enforce and validate).
+        """
+        self.enforce_anti_affinity()
+        self.validate_anti_affinity()
