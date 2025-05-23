@@ -49,13 +49,14 @@ class MigrationManager:
         overloaded_hosts = []
         logger.info("[MigrationPlanner] Detecting overloaded hosts...")
         for host in self.cluster_state.hosts:
-            if self._is_overloaded(host):
+            metrics = self.cluster_state.host_metrics.get(host.name, {})
+            if self._is_overloaded(metrics):
                 overloaded_hosts.append(host)
                 logger.debug(f"[MigrationPlanner] Host '{host.name}' is overloaded.")
 
         return overloaded_hosts
 
-    def _is_overloaded(self, host):
+    def _is_overloaded(self, metrics):
         """
         Determine if a host is overloaded.
         Thresholds become stricter with higher aggressiveness.
@@ -65,10 +66,12 @@ class MigrationManager:
         disk_threshold = 80 - (self.aggressiveness * 5)
         net_threshold = 80 - (self.aggressiveness * 5)
 
-        return (host.cpu_usage > cpu_threshold or
-                host.memory_usage > mem_threshold or
-                host.disk_io_usage > disk_threshold or
-                host.network_io_usage > net_threshold)
+        return (
+            metrics.get('cpu_usage', 0) > cpu_threshold or
+            metrics.get('memory_usage', 0) > mem_threshold or
+            metrics.get('disk_io_usage', 0) > disk_threshold or
+            metrics.get('network_io_usage', 0) > net_threshold
+        )
 
     def _select_vms_to_move(self, host):
         """
