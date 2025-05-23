@@ -25,6 +25,9 @@ def parse_args():
     parser.add_argument("--password", required=True, help="vCenter password")
     parser.add_argument("--dry-run", action="store_true", help="Enable dry-run mode")
     parser.add_argument("--aggressiveness", type=int, default=3, choices=range(1, 6), help="Aggressiveness level (1-5)")
+    parser.add_argument("--balance", action="store_true", help="Auto-balance the cluster based on selected metrics")
+    parser.add_argument("--metrics", type=str, default="cpu,memory,disk,network", help="Comma-separated list of metrics to balance: cpu,memory,disk,network")
+    parser.add_argument("--apply-anti-affinity", action="store_true", help="Apply anti-affinity rules only")
 
     return parser.parse_args()
 
@@ -34,6 +37,40 @@ def main():
 
     args = parse_args()
 
+    logger.info("Starting FDRS...")
+    connection_manager = ConnectionManager(args.vcenter, args.username, args.password)
+    service_instance = connection_manager.connect()
+
+    resource_monitor = ResourceMonitor(service_instance)
+    cluster_state = ClusterState(service_instance)
+    state = cluster_state.get_cluster_state()
+
+    if args.apply_anti_affinity:
+        logger.info("Applying anti-affinity rules only...")
+        constraint_manager = ConstraintManager(service_instance)
+        constraint_manager.apply()
+        connection_manager.disconnect()
+        return
+
+    if args.balance:
+        logger.info(f"Auto-balancing cluster using metrics: {args.metrics}")
+        metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
+        load_evaluator = LoadEvaluator(state)
+        imbalance = load_evaluator.evaluate_imbalance(metrics=metrics, aggressiveness=args.aggressiveness)
+        if imbalance:
+            logger.info("Load imbalance detected. Planning migrations...")
+            constraint_manager = ConstraintManager(service_instance)
+            constraint_manager.apply()
+            migration_planner = MigrationManager(service_instance, state)
+            migration_planner.plan_migrations()
+            scheduler = Scheduler(service_instance, migration_planner, dry_run=args.dry_run)
+            scheduler.execute_migrations()
+        else:
+            logger.info("No imbalance detected. No migrations needed.")
+        connection_manager.disconnect()
+        return
+
+    # Default: run full workflow as before
     # Connect to vCenter
     logger.info("Starting FDRS...")
     connection_manager = ConnectionManager(args.vcenter, args.username, args.password)
@@ -59,7 +96,7 @@ def main():
         constraint_manager.apply()
 
         # Plan migrations
-        migration_planner = MigrationPlanner(service_instance, state)
+        migration_planner = MigrationManager(service_instance, state)
         migration_planner.plan_migrations()
 
         # Schedule migrations
