@@ -47,7 +47,7 @@ def main():
 
     if args.apply_anti_affinity:
         logger.info("Applying anti-affinity rules only...")
-        constraint_manager = ConstraintManager(service_instance)
+        constraint_manager = ConstraintManager(cluster_state)
         constraint_manager.apply()
         connection_manager.disconnect()
         return
@@ -59,11 +59,11 @@ def main():
         imbalance = load_evaluator.evaluate_imbalance(metrics=metrics, aggressiveness=args.aggressiveness)
         if imbalance:
             logger.info("Load imbalance detected. Planning migrations...")
-            constraint_manager = ConstraintManager(service_instance)
+            constraint_manager = ConstraintManager(cluster_state)
             constraint_manager.apply()
-            migration_planner = MigrationManager(service_instance, state)
+            migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
             migration_planner.plan_migrations()
-            scheduler = Scheduler(service_instance, migration_planner, dry_run=args.dry_run)
+            scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
             scheduler.execute_migrations()
         else:
             logger.info("No imbalance detected. No migrations needed.")
@@ -90,17 +90,11 @@ def main():
 
     if imbalance:
         logger.info("Load imbalance detected. Planning migrations...")
-
-        # Apply auto Anti-Affinity rules (Distribute VMs)
-        constraint_manager = ConstraintManager(service_instance)
+        constraint_manager = ConstraintManager(cluster_state)
         constraint_manager.apply()
-
-        # Plan migrations
-        migration_planner = MigrationManager(service_instance, state)
+        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
         migration_planner.plan_migrations()
-
-        # Schedule migrations
-        scheduler = Scheduler(service_instance, migration_planner, dry_run=args.dry_run)
+        scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
         scheduler.execute_migrations()
     else:
         logger.info("No imbalance detected. No migrations needed.")
