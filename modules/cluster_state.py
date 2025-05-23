@@ -86,3 +86,12 @@ class ClusterState:
                 'network_io_usage': metrics.get("Network IO (MB/s)", 0) or 0,
                 'host_obj': host
             }
+
+    def get_vm_by_name(self, name):
+        """
+        Return the VM object with the given name, or None if not found.
+        """
+        for vm in self.vms:
+            if vm.name == name:
+                return vm
+        return None
