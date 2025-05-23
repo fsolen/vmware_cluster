@@ -7,6 +7,7 @@ class ClusterState:
     def __init__(self, service_instance):
         self.service_instance = service_instance
         self.vms = self._get_all_vms()
+        self.hosts = self._get_all_hosts()
 
     def _get_all_vms(self):
         """
@@ -20,6 +21,19 @@ class ClusterState:
                 vms.extend(vm_view.view)
                 vm_view.Destroy()
         return vms
+
+    def _get_all_hosts(self):
+        """
+        Return a flat list of all HostSystem objects in all clusters in all datacenters.
+        """
+        hosts = []
+        content = self.service_instance.RetrieveContent()
+        for datacenter in content.rootFolder.childEntity:
+            if hasattr(datacenter, 'hostFolder'):
+                host_view = content.viewManager.CreateContainerView(datacenter.hostFolder, [vim.HostSystem], True)
+                hosts.extend(host_view.view)
+                host_view.Destroy()
+        return hosts
 
     def get_cluster_state(self):
         """
