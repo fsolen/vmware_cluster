@@ -7,7 +7,7 @@ class Scheduler:
     def __init__(self, connection_manager, dry_run=False):
         self.connection_manager = connection_manager
         self.dry_run = dry_run
-        self.si = connection_manager.si  # Service Instance
+        self.si = connection_manager.service_instance
 
     def execute_migrations(self, migrations):
         """
