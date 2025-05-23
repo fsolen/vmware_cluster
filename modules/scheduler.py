@@ -37,7 +37,7 @@ class Scheduler:
         logger.info(f"[Scheduler] Starting migration of VM '{vm.name}' ➔ '{target_host.name}'")
 
         relocate_spec = vim.vm.RelocateSpec()
-        relocate_spec.host = target_host.ref  # Host reference
+        relocate_spec.host = target_host
         relocate_spec.pool = target_host.resource_pool  # Optional: Assign resource pool
 
         task = vm.ref.Relocate(relocate_spec)
