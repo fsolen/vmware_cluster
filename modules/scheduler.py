@@ -22,6 +22,9 @@ class Scheduler:
         logger.info(f"[Scheduler] Executing {len(migrations)} planned migrations. Mode: {mode}")
 
         for vm, target_host in migrations:
+            if hasattr(vm, 'config') and getattr(vm.config, 'template', False):
+                logger.info(f"[Scheduler] Skipping template VM '{vm.name}'")
+                continue
             try:
                 if self.dry_run:
                     logger.info(f"[DRY-RUN] Would migrate VM '{vm.name}' ➔ Host '{target_host.name}'")
