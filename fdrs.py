@@ -32,7 +32,6 @@ def parse_args():
     return parser.parse_args()
 
 def main():
-    # Print the banner
     print_banner()
 
     args = parse_args()
@@ -49,6 +48,14 @@ def main():
         logger.info("Applying anti-affinity rules only...")
         constraint_manager = ConstraintManager(cluster_state)
         constraint_manager.apply()
+        # Plan and execute migrations for anti-affinity violations
+        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+        migrations = migration_planner.plan_migrations()
+        if migrations:
+            scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
+            scheduler.execute_migrations(migrations)
+        else:
+            logger.info("No anti-affinity migrations needed.")
         connection_manager.disconnect()
         return
 
