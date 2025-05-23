@@ -57,3 +57,13 @@ class ClusterState:
         except Exception as e:
             logger.error(f"Error getting host for VM '{getattr(vm, 'name', str(vm))}': {e}")
             return None
+
+    def get_vm_by_name(self, vm_name):
+        """
+        Given a VM name, return the VM object from self.vms.
+        """
+        for vm in self.vms:
+            if vm.name == vm_name:
+                return vm
+        logger.warning(f"VM with name '{vm_name}' not found in cluster state.")
+        return None
