@@ -1,5 +1,6 @@
 import logging
 import time
+from pyVmomi import vim
 
 logger = logging.getLogger('fdrs')
 
