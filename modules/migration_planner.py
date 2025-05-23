@@ -77,9 +77,13 @@ class MigrationManager:
         """
         From an overloaded host, pick a few VMs that are heavy (CPU, Memory, IO).
         """
+        # Get VMs running on this host
+        vms_on_host = [vm for vm in self.cluster_state.vms if self.cluster_state.get_host_of_vm(vm) == host.name]
         heavy_vms = sorted(
-            host.vms,
-            key=lambda vm: (vm.cpu_usage + vm.memory_usage + vm.disk_io_usage + vm.network_io_usage),
+            vms_on_host,
+            key=lambda vm: (
+                getattr(vm, 'cpu_usage', 0) + getattr(vm, 'memory_usage', 0) + getattr(vm, 'disk_io_usage', 0) + getattr(vm, 'network_io_usage', 0)
+            ),
             reverse=True
         )
         # Pick top 1-3 heavy VMs depending on aggressiveness
