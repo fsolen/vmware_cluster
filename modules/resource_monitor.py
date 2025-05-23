@@ -110,11 +110,15 @@ class ResourceMonitor:
         for metric_name, metric_key in metrics.items():
             metric_data = self._get_performance_data(host, metric_key)
             if metric_data and len(metric_data) > 0:
+                # metric_data[0].value may be a list (array), so take the first value if needed
+                value = metric_data[0].value
+                if isinstance(value, (list, tuple)):
+                    value = value[0] if value else 0
                 # Convert units if necessary
                 if metric_name == "Memory Usage (MB)":
-                    host_metrics[metric_name] = metric_data[0].value / 1024.0  # Assuming data is in KB
+                    host_metrics[metric_name] = value / 1024.0  # Assuming data is in KB
                 else:
-                    host_metrics[metric_name] = metric_data[0].value
+                    host_metrics[metric_name] = value
             else:
                 host_metrics[metric_name] = None  # Handle missing data gracefully
 
