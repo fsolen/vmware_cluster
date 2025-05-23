@@ -22,6 +22,9 @@ class MigrationManager:
         anti_affinity_violations = self.constraint_manager.validate_anti_affinity()
         for vm_name in anti_affinity_violations:
             vm = self.cluster_state.get_vm_by_name(vm_name)
+            if hasattr(vm, 'config') and getattr(vm.config, 'template', False):
+                logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
+                continue
             preferred_host = self.constraint_manager.get_preferred_host_for_vm(vm)
             if preferred_host:
                 migrations.append((vm, preferred_host))
@@ -31,7 +34,9 @@ class MigrationManager:
         for host in imbalance_hosts:
             overloaded_vms = self._select_vms_to_move(host)
             for vm in overloaded_vms:
-                target_host = self._find_better_host(vm, current_host=host)
+                if hasattr(vm, 'config') and getattr(vm.config, 'template', False):
+                    logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
+                    continue
                 if target_host:
                     migrations.append((vm, target_host))
                     logger.info(f"[MigrationPlanner] Load fix planned: Move '{vm.name}' from '{host.name}' ➔ '{target_host.name}'")
