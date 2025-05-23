@@ -71,3 +71,15 @@ class ClusterState:
         except Exception as e:
             logger.error(f"Error getting host for VM '{getattr(vm, 'name', str(vm))}': {e}")
             return None
+
+    def annotate_hosts_with_metrics(self, resource_monitor):
+        """
+        Annotate each host in self.hosts with cpu_usage, memory_usage, disk_io_usage, network_io_usage attributes.
+        """
+        for host in self.hosts:
+            metrics = resource_monitor.get_host_metrics(host)
+            # Default to 0 if metric is missing
+            host.cpu_usage = metrics.get("CPU Usage (MHz)", 0) or 0
+            host.memory_usage = metrics.get("Memory Usage (MB)", 0) or 0
+            host.disk_io_usage = metrics.get("Disk IO (MB/s)", 0) or 0
+            host.network_io_usage = metrics.get("Network IO (MB/s)", 0) or 0
