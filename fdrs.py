@@ -42,6 +42,8 @@ def main():
 
     resource_monitor = ResourceMonitor(service_instance)
     cluster_state = ClusterState(service_instance)
+    # Annotate hosts with metrics for migration logic
+    cluster_state.annotate_hosts_with_metrics(resource_monitor)
     state = cluster_state.get_cluster_state()
 
     if args.apply_anti_affinity:
@@ -89,6 +91,8 @@ def main():
 
     # Get the cluster state
     cluster_state = ClusterState(service_instance)
+    # Annotate hosts with metrics for migration logic
+    cluster_state.annotate_hosts_with_metrics(resource_monitor)
     state = cluster_state.get_cluster_state()
 
     # Evaluate the load and check for imbalance
