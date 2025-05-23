@@ -2,7 +2,7 @@ import logging
 
 logger = logging.getLogger('fdrs')
 
-class MigrationPlanner:
+class MigrationManager:
     def __init__(self, cluster_state, constraint_manager, aggressiveness=3):
         self.cluster_state = cluster_state
         self.constraint_manager = constraint_manager
