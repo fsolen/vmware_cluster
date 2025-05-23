@@ -37,6 +37,7 @@ class MigrationManager:
                 if hasattr(vm, 'config') and getattr(vm.config, 'template', False):
                     logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
                     continue
+                target_host = self._find_better_host(vm, current_host=host)
                 if target_host:
                     migrations.append((vm, target_host))
                     logger.info(f"[MigrationPlanner] Load fix planned: Move '{vm.name}' from '{host.name}' ➔ '{target_host.name}'")
