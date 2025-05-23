@@ -40,7 +40,7 @@ class Scheduler:
         relocate_spec.host = target_host
         relocate_spec.pool = target_host.parent.resourcePool
 
-        task = vm.ref.Relocate(relocate_spec)
+        task = vm.RelocateVM_Task(spec=relocate_spec)
 
         self._wait_for_task(task, f"Migrating {vm.name}")
 
