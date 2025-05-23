@@ -12,9 +12,14 @@ class ClusterState:
         Retrieve and display the state of clusters and their associated VMs
         """
         logger.info("Fetching live cluster state...")
-        content = self.service_instance.RetrieveContent()
 
+        if not self.service_instance:
+            logger.error("No service_instance provided.")
+            raise Exception("service_instance is None")
+
+        content = self.service_instance.RetrieveContent()
         cluster_state = {}
+
         for datacenter in content.rootFolder.childEntity:
             for cluster in datacenter.hostFolder.childEntity:
                 if isinstance(cluster, vim.ClusterComputeResource):
@@ -23,4 +28,3 @@ class ClusterState:
 
         logger.info("Cluster state fetched successfully.")
         return cluster_state
-
