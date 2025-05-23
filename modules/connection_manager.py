@@ -44,7 +44,7 @@ class ConnectionManager:
             logger.error(f"vCenter connection error: {e}")
             raise
 
-    def disconnect():
+    def disconnect(self):
         """
         Disconnects from vCenter
         """
