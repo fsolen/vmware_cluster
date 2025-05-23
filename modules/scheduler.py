@@ -38,7 +38,7 @@ class Scheduler:
 
         relocate_spec = vim.vm.RelocateSpec()
         relocate_spec.host = target_host
-        relocate_spec.pool = target_host.resource_pool  # Optional: Assign resource pool
+        relocate_spec.pool = target_host.parent.resourcePool
 
         task = vm.ref.Relocate(relocate_spec)
 
