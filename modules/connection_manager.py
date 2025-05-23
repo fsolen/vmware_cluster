@@ -39,6 +39,7 @@ class ConnectionManager:
                 raise Exception("Service instance is None")
 
             logger.success("Successfully connected to vCenter!")
+            return self.service_instance
 
         except Exception as e:
             logger.error(f"vCenter connection error: {e}")
