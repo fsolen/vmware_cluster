@@ -54,8 +54,8 @@ class ResourceMonitor:
                 ]
             )
 
-            if metrics and metrics[0].value:
-                return metrics[0].value
+            if metrics and len(metrics) > 0 and metrics[0].value and len(metrics[0].value) > 0:
+                return metrics[0].value[0]  # Return the first value from the first metric
             return None
 
         except Exception as e:
@@ -72,22 +72,23 @@ class ResourceMonitor:
 
         # Define metrics to fetch
         metrics = {
-            "CPU Usage (MHz)": "cpu.usage",
-            "Memory Usage (MB)": "mem.usage",
-            "Disk IO (MB/s)": "disk.usage",
-            "Network IO (MB/s)": "net.usage"
+            "cpu_usage": "cpu.usage",
+            "memory_usage": "mem.usage",
+            "disk_io_usage": "disk.usage", 
+            "network_io_usage": "net.usage"
         }
 
-        for metric_name, metric_key in metrics.items():
-            metric_data = self._get_performance_data(vm, metric_key)
-            if metric_data and len(metric_data) > 0:
-                # Convert units if necessary
-                if metric_name == "Memory Usage (MB)":
-                    vm_metrics[metric_name] = metric_data[0].value / 1024.0  # Assuming data is in KB
+        for metric_key, counter_key in metrics.items():
+            metric_data = self._get_performance_data(vm, counter_key)
+            if metric_data:
+                # Convert units if necessary 
+                if metric_key == "memory_usage":
+                    # Convert KB to MB
+                    vm_metrics[metric_key] = metric_data / 1024.0
                 else:
-                    vm_metrics[metric_name] = metric_data[0].value
+                    vm_metrics[metric_key] = metric_data
             else:
-                vm_metrics[metric_name] = None  # Handle missing data gracefully
+                vm_metrics[metric_key] = 0.0  # Default to 0 for missing data
 
         return vm_metrics
 
@@ -101,26 +102,31 @@ class ResourceMonitor:
 
         # Define metrics to fetch
         metrics = {
-            "CPU Usage (MHz)": "cpu.usage",
-            "Memory Usage (MB)": "mem.usage",
-            "Disk IO (MB/s)": "disk.usage",
-            "Network IO (MB/s)": "net.usage"
+            "cpu_usage": "cpu.usage",
+            "memory_usage": "mem.usage",
+            "disk_io_usage": "disk.usage",
+            "network_io_usage": "net.usage"
         }
 
-        for metric_name, metric_key in metrics.items():
-            metric_data = self._get_performance_data(host, metric_key)
-            if metric_data and len(metric_data) > 0:
-                # metric_data[0].value may be a list (array), so take the first value if needed
-                value = metric_data[0].value
-                if isinstance(value, (list, tuple)):
-                    value = value[0] if value else 0
+        for metric_key, counter_key in metrics.items():
+            metric_data = self._get_performance_data(host, counter_key)
+            if metric_data:
                 # Convert units if necessary
-                if metric_name == "Memory Usage (MB)":
-                    host_metrics[metric_name] = value / 1024.0  # Assuming data is in KB
+                if metric_key == "memory_usage":
+                    # Convert KB to MB
+                    host_metrics[metric_key] = metric_data / 1024.0
                 else:
-                    host_metrics[metric_name] = value
+                    host_metrics[metric_key] = metric_data
             else:
-                host_metrics[metric_name] = None  # Handle missing data gracefully
+                host_metrics[metric_key] = 0.0  # Default to 0 for missing data
+
+        # Add capacity information
+        host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
+        host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
+        
+        # Set reasonable defaults for IO capacities
+        host_metrics["disk_io_capacity"] = 1000  # 1000 MB/s - typical SAN throughput
+        host_metrics["network_capacity"] = 10000  # 10 Gbps converted to Mbps
 
         return host_metrics
 

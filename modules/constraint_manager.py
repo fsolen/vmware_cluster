@@ -36,22 +36,27 @@ class ConstraintManager:
 
         for prefix, vms in self.vm_distribution.items():
             host_set = set()
+            vm_by_host = {}
             for vm in vms:
                 host_name = self.cluster_state.get_host_of_vm(vm)
                 if not host_name:
-                    continue  # Ignore VMs with no host
+                    continue
                 if host_name in host_set:
-                    logger.warning("[ConstraintManager] Violation: Prefix '{}' has multiple VMs on host '{}'".format(prefix, host_name))
+                    # This is a violation - same prefix VMs on same host
                     violations.append(vm.name)
+                    if host_name in vm_by_host:
+                        # Also add the other VM that was first found on this host
+                        violations.append(vm_by_host[host_name].name)
                 else:
                     host_set.add(host_name)
+                    vm_by_host[host_name] = vm
 
         if not violations:
             logger.info("[ConstraintManager] No Anti-Affinity violations detected.")
         else:
             logger.info("[ConstraintManager] Found {} Anti-Affinity violations.".format(len(violations)))
 
-        return violations
+        return list(set(violations))  # Remove duplicates
 
     def get_preferred_host_for_vm(self, vm):
         """

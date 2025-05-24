@@ -1,19 +1,20 @@
-import logging
+from modules.logger import Logger
 
-logger = logging.getLogger('fdrs')
+logger = Logger()
 
 class MigrationManager:
     def __init__(self, cluster_state, constraint_manager, aggressiveness=3):
         self.cluster_state = cluster_state
         self.constraint_manager = constraint_manager
         self.aggressiveness = aggressiveness
+        self.logger = Logger()  # Use our enhanced Logger
 
     def plan_migrations(self):
         """
         Main function to decide which VMs should move where.
         Returns a list of (VM, TargetHost) tuples.
         """
-        logger.info("[MigrationPlanner] Planning migrations...")
+        self.logger.info("[MigrationPlanner] Planning migrations...")
         migrations = []
 
         imbalance_hosts = self._detect_imbalanced_hosts()
@@ -23,29 +24,74 @@ class MigrationManager:
         for vm_name in anti_affinity_violations:
             vm = self.cluster_state.get_vm_by_name(vm_name)
             if hasattr(vm, 'config') and getattr(vm.config, 'template', False):
-                logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
+                self.logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
                 continue
             preferred_host = self.constraint_manager.get_preferred_host_for_vm(vm)
             if preferred_host:
                 migrations.append((vm, preferred_host))
-                logger.info(f"[MigrationPlanner] Anti-Affinity fix planned: Move '{vm.name}' ➔ '{preferred_host.name}'")
+                self.logger.track_migration(
+                    vm_name=vm.name,
+                    source_host=self.cluster_state.get_host_of_vm(vm),
+                    target_host=preferred_host.name,
+                    reason="Anti-Affinity rule violation",
+                    metrics={
+                        'source_metrics': self.cluster_state.host_metrics.get(self.cluster_state.get_host_of_vm(vm), {}),
+                        'target_metrics': self.cluster_state.host_metrics.get(preferred_host.name, {}),
+                        'vm_metrics': self.cluster_state.vm_metrics.get(vm.name, {})
+                    }
+                )
+                self.logger.info(f"[MigrationPlanner] Anti-Affinity fix planned: Move '{vm.name}' ➔ '{preferred_host.name}'")
 
         # Handle Load imbalance
         for host in imbalance_hosts:
             overloaded_vms = self._select_vms_to_move(host)
             for vm in overloaded_vms:
                 if hasattr(vm, 'config') and getattr(vm.config, 'template', False):
-                    logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
+                    self.logger.info(f"[MigrationPlanner] Skipping template VM '{vm.name}' in planning phase")
                     continue
                 target_host = self._find_better_host(vm, current_host=host)
                 if target_host:
                     migrations.append((vm, target_host))
-                    logger.info(f"[MigrationPlanner] Load fix planned: Move '{vm.name}' from '{host.name}' ➔ '{target_host.name}'")
+                    self.logger.track_migration(
+                        vm_name=vm.name,
+                        source_host=host.name,
+                        target_host=target_host.name,
+                        reason=f"Host overload (CPU: {self.cluster_state.host_metrics[host.name]['cpu_usage_pct']:.1f}%, MEM: {self.cluster_state.host_metrics[host.name]['memory_usage_pct']:.1f}%)",
+                        metrics={
+                            'source_metrics': self.cluster_state.host_metrics.get(host.name, {}),
+                            'target_metrics': self.cluster_state.host_metrics.get(target_host.name, {}),
+                            'vm_metrics': self.cluster_state.vm_metrics.get(vm.name, {})
+                        }
+                    )
+                    self.logger.info(f"[MigrationPlanner] Load fix planned: Move '{vm.name}' from '{host.name}' ➔ '{target_host.name}'")
         
         if not migrations:
-            logger.info("[MigrationPlanner] No migrations needed. Cluster is healthy.")
+            self.logger.info("[MigrationPlanner] No migrations needed. Cluster is healthy.")
 
         return migrations
+
+    def execute_migrations(self, migrations):
+        """Execute the planned migrations"""
+        for vm, target_host in migrations:
+            try:
+                # Here would be the actual migration code...
+                source_host = self.cluster_state.get_host_of_vm(vm)
+                self.logger.success(f"Migration of '{vm.name}' from '{source_host}' to '{target_host.name}' completed")
+                self.logger.track_event('migration_complete', {
+                    'vm_name': vm.name,
+                    'source_host': source_host,
+                    'target_host': target_host.name,
+                    'success': True
+                })
+            except Exception as e:
+                self.logger.error(f"Migration of '{vm.name}' failed: {str(e)}")
+                self.logger.track_event('migration_complete', {
+                    'vm_name': vm.name,
+                    'source_host': source_host,
+                    'target_host': target_host.name,
+                    'success': False,
+                    'error': str(e)
+                })
 
     def _detect_imbalanced_hosts(self):
         """
@@ -53,12 +99,16 @@ class MigrationManager:
         Aggressiveness factor (1-5) controls sensitivity.
         """
         overloaded_hosts = []
-        logger.info("[MigrationPlanner] Detecting overloaded hosts...")
+        self.logger.info("[MigrationPlanner] Detecting overloaded hosts...")
         for host in self.cluster_state.hosts:
             metrics = self.cluster_state.host_metrics.get(host.name, {})
             if self._is_overloaded(metrics):
                 overloaded_hosts.append(host)
-                logger.debug(f"[MigrationPlanner] Host '{host.name}' is overloaded.")
+                self.logger.info(f"[MigrationPlanner] Host '{host.name}' is overloaded:")
+                self.logger.info(f"  CPU: {metrics.get('cpu_usage_pct', 0):.1f}%")
+                self.logger.info(f"  Memory: {metrics.get('memory_usage_pct', 0):.1f}%")
+                self.logger.info(f"  Disk I/O: {metrics.get('disk_io_usage', 0):.1f} MBps")
+                self.logger.info(f"  Network I/O: {metrics.get('network_io_usage', 0):.1f} MBps")
 
         return overloaded_hosts
 
@@ -119,17 +169,63 @@ class MigrationManager:
         return best_host
 
     def _would_fit(self, vm, host):
-        metrics = self.cluster_state.host_metrics.get(host.name, {})
-        projected_cpu = metrics.get('cpu_usage', 0) + getattr(vm, 'cpu_usage', 0)
-        projected_mem = metrics.get('memory_usage', 0) + getattr(vm, 'memory_usage', 0)
-        projected_disk = metrics.get('disk_io_usage', 0) + getattr(vm, 'disk_io_usage', 0)
-        projected_net = metrics.get('network_io_usage', 0) + getattr(vm, 'network_io_usage', 0)
-        return (projected_cpu < 90 and projected_mem < 90 and projected_disk < 90 and projected_net < 90)
+        """
+        Check if a VM would fit on a target host based on resource constraints.
+        Returns True if the VM can be placed on the host without overloading it.
+        """
+        host_metrics = self.cluster_state.host_metrics.get(host.name, {})
+        vm_metrics = self.cluster_state.vm_metrics.get(vm.name, {})
+        
+        # Calculate projected resource usage
+        projected_cpu = host_metrics.get('cpu_usage', 0) + vm_metrics.get('cpu_usage', 0)
+        projected_mem = host_metrics.get('memory_usage', 0) + vm_metrics.get('memory_usage', 0)
+        projected_disk = host_metrics.get('disk_io_usage', 0) + vm_metrics.get('disk_io_usage', 0)
+        projected_net = host_metrics.get('network_io_usage', 0) + vm_metrics.get('network_io_usage', 0)
+        
+        # Define thresholds based on aggressiveness (lower = more conservative)
+        cpu_threshold = 80 - (self.aggressiveness * 5)  # 65-75% depending on aggressiveness
+        mem_threshold = 85 - (self.aggressiveness * 5)  # 70-80%
+        io_threshold = 70 - (self.aggressiveness * 5)   # 55-65%
+        
+        # Check if projected usage is within thresholds
+        if (projected_cpu > cpu_threshold or
+            projected_mem > mem_threshold or
+            projected_disk > io_threshold or
+            projected_net > io_threshold):
+            return False
+            
+        return True
 
     def _score_host_for_vm(self, vm, host):
-        metrics = self.cluster_state.host_metrics.get(host.name, {})
-        cpu_score = 100 - metrics.get('cpu_usage', 0)
-        mem_score = 100 - metrics.get('memory_usage', 0)
-        disk_score = 100 - metrics.get('disk_io_usage', 0)
-        net_score = 100 - metrics.get('network_io_usage', 0)
-        return cpu_score + mem_score + disk_score + net_score
+        """
+        Score a host as a target for VM placement.
+        Returns a score where higher is better.
+        Takes into account:
+        - Current resource utilization
+        - Resource balance
+        - Anti-affinity rules
+        """
+        if not self._would_fit(vm, host):
+            return float('-inf')  # Host can't accommodate VM
+            
+        host_metrics = self.cluster_state.host_metrics.get(host.name, {})
+        base_score = 100
+        
+        # Penalize based on current resource utilization
+        cpu_penalty = host_metrics.get('cpu_usage', 0) * 0.4
+        mem_penalty = host_metrics.get('memory_usage', 0) * 0.3
+        io_penalty = (host_metrics.get('disk_io_usage', 0) + 
+                     host_metrics.get('network_io_usage', 0)) * 0.15
+        
+        # Check anti-affinity rules if constraint manager is available
+        affinity_penalty = 0
+        if self.constraint_manager:
+            vm_prefix = vm.name[:-2]  # Remove last 2 chars
+            for other_vm in self.cluster_state.get_vms_on_host(host):
+                if other_vm.name[:-2] == vm_prefix:
+                    affinity_penalty = 50  # Heavy penalty for anti-affinity violation
+                    
+        # Calculate final score
+        score = base_score - cpu_penalty - mem_penalty - io_penalty - affinity_penalty
+        
+        return max(0, score)  # Don't return negative scores
