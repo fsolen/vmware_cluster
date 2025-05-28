@@ -30,97 +30,109 @@ class ResourceMonitor:
         return counter_map
 
     def _get_performance_data(self, entity, metric_name, interval=20):
-        """
-        Fetches the performance data for a specific entity (VM or Host).
-        :param entity: The VM or Host object
-        :param metric_name: The metric name to be fetched (CPU, Memory, etc.)
-        :param interval: The sampling interval in seconds (default 20s)
-        :return: A list of metric data
-        """
-        try:
-            metric_id = self.counter_map.get(metric_name)
-            if not metric_id:
-                logger.warning(f"Metric {metric_name} not found in counter map!")
-                return None
+        content = self.service_instance.RetrieveContent()
+        metric_id = self.counter_map.get(metric_name)
+        if not metric_id:
+            logger.warning(f"Metric ID for {metric_name} not found in counter map for entity {entity.name if hasattr(entity, 'name') else 'unknown entity'}!")
+            return None
 
-            metrics = self.performance_manager.QueryPerf(
+        try:
+            query_results = self.performance_manager.QueryPerf(
                 querySpec=[
                     vim.PerformanceManager.QuerySpec(
                         entity=entity,
                         metricId=[vim.PerformanceManager.MetricId(counterId=metric_id, instance='')],
                         intervalId=interval,
-                        maxSample=1  # Only take the latest sample
+                        maxSample=1
                     )
                 ]
             )
 
-            if metrics and metrics[0].value:
-                return metrics[0].value
-            return None
-
+            if query_results and len(query_results) > 0:
+                metric_series_list = query_results[0].value # This is a list of MetricSeries objects
+                if metric_series_list and len(metric_series_list) > 0:
+                    metric_series = metric_series_list[0] # First MetricSeries
+                    if hasattr(metric_series, 'value') and metric_series.value and len(metric_series.value) > 0:
+                        # metric_series.value is the list of actual data points (e.g., integers for IntSeries)
+                        scalar_value = metric_series.value[0]
+                        if scalar_value is None: # Handle if the specific sample value is None
+                            logger.warning(f"Metric {metric_name} for {entity.name if hasattr(entity, 'name') else 'entity'} has a None value in its series.")
+                            return 0 # Default to 0 if specific sample value is None
+                        return scalar_value # Return the scalar value
+                    else:
+                        logger.warning(f"Metric {metric_name} for {entity.name if hasattr(entity, 'name') else 'entity'} has empty or missing 'value' list in its series.")
+                else:
+                    logger.warning(f"No metric series list found for {metric_name} on {entity.name if hasattr(entity, 'name') else 'entity'}.")
+            else:
+                logger.info(f"No performance data returned for {metric_name} on {entity.name if hasattr(entity, 'name') else 'entity'}. This might be normal if the counter is not applicable or data is not yet available.")
+            return 0 # Default to 0 if no data found or any other issue
         except Exception as e:
-            logger.error(f"Error fetching performance data for {metric_name}: {e}")
-            return None
+            # Log specifics about the entity if possible
+            entity_name = getattr(entity, 'name', 'unknown entity')
+            logger.error(f"Error fetching scalar performance data for {metric_name} on {entity_name}: {e}")
+            return 0 # Default to 0 on error
 
     def get_vm_metrics(self, vm):
-        """
-        Fetches the resource metrics (CPU, Memory, Disk I/O, Network I/O) for a given VM.
-        :param vm: The virtual machine object
-        :return: A dictionary with metrics (CPU, Memory, Disk IO, Network IO)
-        """
         vm_metrics = {}
-
-        # Define metrics to fetch
-        metrics = {
-            "CPU Usage (MHz)": "cpu.usage",
-            "Memory Usage (MB)": "mem.usage",
-            "Disk IO (MB/s)": "disk.usage",
-            "Network IO (MB/s)": "net.usage"
+        metrics_to_fetch = { # Renamed 'metrics' to 'metrics_to_fetch' to avoid confusion
+            "cpu_usage": "cpu.usage",       # Percentage 0-10000
+            "memory_usage": "mem.usage",    # Percentage 0-10000
+            "disk_io_usage": "disk.usage",  # Assuming KBps (e.g. from a counter like disk.read/write aggregated)
+            "network_io_usage": "net.usage" # Assuming KBps (e.g. from a counter like net.tx/rx aggregated)
         }
 
-        for metric_name, metric_key in metrics.items():
-            metric_data = self._get_performance_data(vm, metric_key)
-            if metric_data and len(metric_data) > 0:
-                # Convert units if necessary
-                if metric_name == "Memory Usage (MB)":
-                    vm_metrics[metric_name] = metric_data[0].value / 1024.0  # Assuming data is in KB
-                else:
-                    vm_metrics[metric_name] = metric_data[0].value
+        for metric_key, counter_key in metrics_to_fetch.items():
+            scalar_metric_value = self._get_performance_data(vm, counter_key)
+
+            if scalar_metric_value is None: # Should not happen if _get_performance_data defaults to 0
+                scalar_metric_value = 0.0
+
+            if metric_key == "cpu_usage":      # Counter value is 0-10000 (e.g., 5000 means 50%)
+                vm_metrics[metric_key] = scalar_metric_value / 100.0
+            elif metric_key == "memory_usage": # Counter value is 0-10000 (e.g., 5000 means 50%)
+                vm_metrics[metric_key] = scalar_metric_value / 100.0
+            elif metric_key == "disk_io_usage": # Assuming result from counter is in KBps
+                vm_metrics[metric_key] = scalar_metric_value / 1024.0 # Convert to MBps
+            elif metric_key == "network_io_usage": # Assuming result from counter is in KBps
+                vm_metrics[metric_key] = scalar_metric_value / 1024.0 # Convert to MBps
             else:
-                vm_metrics[metric_name] = None  # Handle missing data gracefully
+                vm_metrics[metric_key] = scalar_metric_value # Should not be reached with current keys
 
         return vm_metrics
 
     def get_host_metrics(self, host):
-        """
-        Fetches the resource metrics (CPU, Memory, Disk I/O, Network I/O) for a given Host.
-        :param host: The ESXi host object
-        :return: A dictionary with metrics (CPU, Memory, Disk IO, Network IO)
-        """
         host_metrics = {}
-
-        # Define metrics to fetch
-        metrics = {
-            "CPU Usage (MHz)": "cpu.usage",
-            "Memory Usage (MB)": "mem.usage",
-            "Disk IO (MB/s)": "disk.usage",
-            "Network IO (MB/s)": "net.usage"
+        metrics_to_fetch = {
+            "cpu_usage": "cpu.usage",       # Percentage 0-10000
+            "memory_usage": "mem.usage",    # Percentage 0-10000
+            "disk_io_usage": "disk.usage",  # Assuming KBps
+            "network_io_usage": "net.usage" # Assuming KBps
         }
 
-        for metric_name, metric_key in metrics.items():
-            metric_data = self._get_performance_data(host, metric_key)
-            if metric_data and len(metric_data) > 0:
-                # metric_data[0].value may be a list (array), so take the first value if needed
-                value = metric_data[0].value
-                if isinstance(value, (list, tuple)):
-                    value = value[0] if value else 0
-                # Convert units if necessary
-                if metric_name == "Memory Usage (MB)":
-                    host_metrics[metric_name] = value / 1024.0  # Assuming data is in KB
-                else:
-                    host_metrics[metric_name] = value
+        for metric_key, counter_key in metrics_to_fetch.items():
+            scalar_metric_value = self._get_performance_data(host, counter_key)
+
+            if scalar_metric_value is None: # Should not happen if _get_performance_data defaults to 0
+                scalar_metric_value = 0.0
+
+            if metric_key == "cpu_usage":      # Counter value is 0-10000
+                host_metrics[metric_key] = scalar_metric_value / 100.0
+            elif metric_key == "memory_usage": # Counter value is 0-10000
+                host_metrics[metric_key] = scalar_metric_value / 100.0
+            elif metric_key == "disk_io_usage": # Assuming KBps
+                host_metrics[metric_key] = scalar_metric_value / 1024.0 # Convert to MBps
+            elif metric_key == "network_io_usage": # Assuming KBps
+                host_metrics[metric_key] = scalar_metric_value / 1024.0 # Convert to MBps
             else:
-                host_metrics[metric_name] = None  # Handle missing data gracefully
+                host_metrics[metric_key] = scalar_metric_value
+
+        # Add capacity information
+        host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
+        host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
+        
+        # Set reasonable defaults for IO capacities (These are rough estimates, real values are hard to get)
+        host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s 
+        host_metrics["network_capacity"] = (host.hardware.networkInfo.pnic[0].linkSpeed * len(host.hardware.networkInfo.pnic)) / 8.0 if host.hardware.networkInfo and host.hardware.networkInfo.pnic else 1250 # Example: 10 Gbps in MB/s (10000 / 8)
 
         return host_metrics
 
@@ -152,4 +164,3 @@ class ResourceMonitor:
 
             # Sleep for the interval
             time.sleep(interval)
-
