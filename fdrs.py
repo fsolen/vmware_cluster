@@ -63,7 +63,7 @@ def main():
     if args.balance:
         logger.info(f"Auto-balancing cluster using metrics: {args.metrics}")
         metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
-        load_evaluator = LoadEvaluator(state)
+        load_evaluator = LoadEvaluator(state['hosts'])
         imbalance = load_evaluator.evaluate_imbalance(metrics=metrics, aggressiveness=args.aggressiveness)
         if imbalance:
             logger.info("Load imbalance detected. Planning migrations...")
@@ -79,7 +79,7 @@ def main():
         return
 
     # Evaluate the load and check for imbalance
-    load_evaluator = LoadEvaluator(state)
+    load_evaluator = LoadEvaluator(state['hosts'])
     imbalance = load_evaluator.evaluate_imbalance(aggressiveness=args.aggressiveness)
 
     if imbalance:
