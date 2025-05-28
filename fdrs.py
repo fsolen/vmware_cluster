@@ -42,8 +42,7 @@ def main():
 
     resource_monitor = ResourceMonitor(service_instance)
     cluster_state = ClusterState(service_instance)
-    # Annotate hosts with metrics for migration logic
-    cluster_state.annotate_hosts_with_metrics(resource_monitor)
+    cluster_state.update_metrics(resource_monitor) # Ensure metrics are populated
     state = cluster_state.get_cluster_state()
 
     if args.apply_anti_affinity:
@@ -78,22 +77,6 @@ def main():
             logger.info("No imbalance detected. No migrations needed.")
         connection_manager.disconnect()
         return
-
-    # Default: run full workflow as before
-    # Connect to vCenter
-    logger.info("Starting FDRS...")
-    connection_manager = ConnectionManager(args.vcenter, args.username, args.password)
-    service_instance = connection_manager.connect()
-
-    # Monitor Resources (this can be done in a separate thread)
-    resource_monitor = ResourceMonitor(service_instance)
-    # resource_monitor.start_monitoring()  # Uncomment to enable live resource monitoring in the background
-
-    # Get the cluster state
-    cluster_state = ClusterState(service_instance)
-    # Annotate hosts with metrics for migration logic
-    cluster_state.annotate_hosts_with_metrics(resource_monitor)
-    state = cluster_state.get_cluster_state()
 
     # Evaluate the load and check for imbalance
     load_evaluator = LoadEvaluator(state)
