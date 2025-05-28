@@ -7,12 +7,51 @@ class LoadEvaluator:
     def __init__(self, hosts):
         self.hosts = hosts  # List of Host objects with resource attributes
 
-    def get_resource_lists(self):
-        cpu = [host.cpu_usage for host in self.hosts]
-        mem = [host.memory_usage for host in self.hosts]
-        disk = [host.disk_usage for host in self.hosts]
-        net = [host.network_usage for host in self.hosts]
-        return cpu, mem, disk, net
+    def get_resource_percentage_lists(self):
+        cpu_percentages = []
+        mem_percentages = []
+        disk_percentages = []
+        net_percentages = []
+
+        # self.hosts should be a list of host metric dictionaries
+        if not isinstance(self.hosts, list):
+            logger.error(f"LoadEvaluator.hosts is not a list (type: {type(self.hosts)}). It may not have been initialized correctly with state['hosts']. Cannot calculate percentage lists.")
+            return [], [], [], [] # Return empty lists to prevent further errors
+
+        for host_data in self.hosts:
+            if not isinstance(host_data, dict):
+                logger.warning(f"Expected a dict for host_data, got {type(host_data)}. Skipping this host.")
+                cpu_percentages.append(0)
+                mem_percentages.append(0)
+                disk_percentages.append(0)
+                net_percentages.append(0)
+                continue
+
+            # CPU
+            cpu_usage = host_data.get('cpu_usage', 0.0)
+            cpu_capacity = host_data.get('cpu_capacity', 0.0)
+            cpu_perc = (cpu_usage / cpu_capacity * 100.0) if cpu_capacity > 0 else 0.0
+            cpu_percentages.append(cpu_perc)
+
+            # Memory
+            mem_usage = host_data.get('memory_usage', 0.0)
+            mem_capacity = host_data.get('memory_capacity', 0.0)
+            mem_perc = (mem_usage / mem_capacity * 100.0) if mem_capacity > 0 else 0.0
+            mem_percentages.append(mem_perc)
+
+            # Disk I/O
+            disk_usage = host_data.get('disk_io_usage', 0.0)
+            disk_capacity = host_data.get('disk_io_capacity', 0.0) 
+            disk_perc = (disk_usage / disk_capacity * 100.0) if disk_capacity > 0 else 0.0
+            disk_percentages.append(disk_perc)
+
+            # Network I/O
+            net_usage = host_data.get('network_io_usage', 0.0)
+            net_capacity = host_data.get('network_capacity', 0.0)
+            net_perc = (net_usage / net_capacity * 100.0) if net_capacity > 0 else 0.0
+            net_percentages.append(net_perc)
+            
+        return cpu_percentages, mem_percentages, disk_percentages, net_percentages
 
     def get_thresholds(self, aggressiveness=3):
         """
