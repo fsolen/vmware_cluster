@@ -62,36 +62,67 @@ def main():
 
     if args.balance:
         logger.info(f"Auto-balancing cluster using metrics: {args.metrics}")
-        metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
+        metrics_list = [m.strip() for m in args.metrics.split(",") if m.strip()] # Renamed 'metrics' to 'metrics_list'
+        
         load_evaluator = LoadEvaluator(state['hosts'])
-        imbalance = load_evaluator.evaluate_imbalance(metrics=metrics, aggressiveness=args.aggressiveness)
-        if imbalance:
-            logger.info("Load imbalance detected. Planning migrations...")
-            constraint_manager = ConstraintManager(cluster_state)
-            constraint_manager.apply()
-            migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
-            migration_planner.plan_migrations()
-            scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
-            scheduler.execute_migrations()
+        constraint_manager = ConstraintManager(cluster_state)
+        # Consider applying constraints only if migrations are attempted or part of planner
+        # constraint_manager.apply() # This might be better inside MigrationManager or just before planning specific moves
+
+        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+
+        # Log statistical imbalance for informational purposes
+        statistical_imbalance_detected = load_evaluator.evaluate_imbalance(metrics=metrics_list, aggressiveness=args.aggressiveness)
+        if statistical_imbalance_detected:
+            logger.info("Statistical load imbalance detected by LoadEvaluator. MigrationPlanner will now determine actions.")
         else:
-            logger.info("No imbalance detected. No migrations needed.")
+            logger.info("LoadEvaluator reports no significant statistical imbalance. MigrationPlanner will still check for individual host overloads and anti-affinity rules.")
+
+        # Always call plan_migrations if in balancing mode.
+        # MigrationManager's plan_migrations should handle constraint_manager.apply() internally if it's specific to its plans.
+        # For now, assume constraint_manager.apply() is okay here or handled by MigrationManager.
+        # If constraint_manager.apply() modifies state that MigrationManager reads, its placement matters.
+        # Let's ensure constraints are applied before planning.
+        logger.info("Applying constraints before migration planning...")
+        constraint_manager.apply()
+        
+        logger.info("Proceeding with migration planning phase...")
+        migrations = migration_planner.plan_migrations() 
+
+        if migrations:
+            logger.info(f"Found {len(migrations)} migration(s) to perform for load balancing and/or anti-affinity.")
+            scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
+            scheduler.execute_migrations(migrations) # Ensure this method exists and is correct
+        else:
+            logger.info("Migration planning complete. No actionable migrations found or needed at this time.")
+        
         connection_manager.disconnect()
         return
 
-    # Evaluate the load and check for imbalance
+    logger.info("Running default FDRS workflow (evaluating load and planning migrations if needed)...")
     load_evaluator = LoadEvaluator(state['hosts'])
-    imbalance = load_evaluator.evaluate_imbalance(aggressiveness=args.aggressiveness)
+    constraint_manager = ConstraintManager(cluster_state)
+    migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
 
-    if imbalance:
-        logger.info("Load imbalance detected. Planning migrations...")
-        constraint_manager = ConstraintManager(cluster_state)
-        constraint_manager.apply()
-        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
-        migration_planner.plan_migrations()
-        scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
-        scheduler.execute_migrations()
+    # Log statistical imbalance for informational purposes
+    statistical_imbalance_detected = load_evaluator.evaluate_imbalance(aggressiveness=args.aggressiveness)
+    if statistical_imbalance_detected:
+        logger.info("Statistical load imbalance detected by LoadEvaluator. MigrationPlanner will now determine actions.")
     else:
-        logger.info("No imbalance detected. No migrations needed.")
+        logger.info("LoadEvaluator reports no significant statistical imbalance. MigrationPlanner will still check for individual host overloads and anti-affinity rules.")
+    
+    logger.info("Applying constraints before migration planning...")
+    constraint_manager.apply()
+
+    logger.info("Proceeding with migration planning phase...")
+    migrations = migration_planner.plan_migrations()
+
+    if migrations:
+        logger.info(f"Found {len(migrations)} migration(s) to perform for load balancing and/or anti-affinity.")
+        scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
+        scheduler.execute_migrations(migrations)
+    else:
+        logger.info("Migration planning complete. No actionable migrations found or needed at this time.")
 
     # Disconnect from vCenter
     connection_manager.disconnect()
