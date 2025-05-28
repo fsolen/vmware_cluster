@@ -123,10 +123,10 @@ class MigrationManager:
         net_threshold = 80 - (self.aggressiveness * 5)
 
         return (
-            metrics.get('cpu_usage', 0) > cpu_threshold or
-            metrics.get('memory_usage', 0) > mem_threshold or
-            metrics.get('disk_io_usage', 0) > disk_threshold or
-            metrics.get('network_io_usage', 0) > net_threshold
+            metrics.get('cpu_usage_pct', 0.0) > cpu_threshold or
+            metrics.get('memory_usage_pct', 0.0) > mem_threshold or
+            metrics.get('disk_io_usage', 0.0) > disk_threshold or
+            metrics.get('network_io_usage', 0.0) > net_threshold
         )
 
     def _select_vms_to_move(self, host):
