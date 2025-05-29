@@ -50,7 +50,9 @@ def main():
         constraint_manager = ConstraintManager(cluster_state)
         constraint_manager.apply()
         # Plan and execute migrations for anti-affinity violations
-        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+        # Instantiate LoadEvaluator even for anti-affinity for consistent MigrationManager instantiation
+        load_evaluator = LoadEvaluator(state['hosts']) 
+        migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
         migrations = migration_planner.plan_migrations()
         if migrations:
             scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
@@ -69,7 +71,7 @@ def main():
         # Consider applying constraints only if migrations are attempted or part of planner
         # constraint_manager.apply() # This might be better inside MigrationManager or just before planning specific moves
 
-        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+        migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
 
         # Log statistical imbalance for informational purposes
         statistical_imbalance_detected = load_evaluator.evaluate_imbalance(metrics=metrics_list, aggressiveness=args.aggressiveness)
@@ -102,7 +104,7 @@ def main():
     logger.info("Running default FDRS workflow (evaluating load and planning migrations if needed)...")
     load_evaluator = LoadEvaluator(state['hosts'])
     constraint_manager = ConstraintManager(cluster_state)
-    migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+    migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
 
     # Log statistical imbalance for informational purposes
     statistical_imbalance_detected = load_evaluator.evaluate_imbalance(aggressiveness=args.aggressiveness)

@@ -130,37 +130,16 @@ class ResourceMonitor:
         host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
         host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
         
-        # Set reasonable defaults for IO capacities (These are rough estimates, real values are hard to get)
-        host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s 
-        host_metrics["network_capacity"] = (host.hardware.networkInfo.pnic[0].linkSpeed * len(host.hardware.networkInfo.pnic)) / 8.0 if host.hardware.networkInfo and host.hardware.networkInfo.pnic else 1250 # Example: 10 Gbps in MB/s (10000 / 8)
+        # Disk I/O capacity is an estimated value. For consistent balancing based on percentages,
+        # this value should be the same for all hosts, or derived using a consistent methodology if dynamic.
+        # Current balancing logic (max % - min %) is effective for relative load comparison
+        # as long as the capacity figure, even if an estimate, is applied uniformly.
+        host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s (estimated)
+        
+        # Network capacity is derived from the sum of speeds of all physical NICs (pNICs).
+        # This provides a more dynamic and host-specific capacity compared to a fixed estimate.
+        # If pNIC info is unavailable, a default estimate is used.
+        host_metrics["network_capacity"] = (sum(pnic.linkSpeed for pnic in host.hardware.networkInfo.pnic) / 8.0) \
+                                           if host.hardware.networkInfo and host.hardware.networkInfo.pnic else 1250 # Convert total Mbps to MB/s
 
         return host_metrics
-
-    def monitor(self, interval=5):
-        """
-        Main loop to monitor all VMs and Hosts every 'interval' seconds.
-        :param interval: The time between each metric fetch (default 5 seconds)
-        """
-        while True:
-            # Fetch VM metrics
-            logger.info("Fetching VM metrics...")
-            vms = self.service_instance.content.viewManager.CreateContainerView(
-                self.service_instance.content.rootFolder, [vim.VirtualMachine], True
-            )
-            for vm in vms.view:
-                vm_metrics = self.get_vm_metrics(vm)
-                if vm_metrics:
-                    logger.info(f"VM: {vm.name} Metrics: {vm_metrics}")
-
-            # Fetch Host metrics
-            logger.info("Fetching Host metrics...")
-            hosts = self.service_instance.content.viewManager.CreateContainerView(
-                self.service_instance.content.rootFolder, [vim.HostSystem], True
-            )
-            for host in hosts.view:
-                host_metrics = self.get_host_metrics(host)
-                if host_metrics:
-                    logger.info(f"Host: {host.name} Metrics: {host_metrics}")
-
-            # Sleep for the interval
-            time.sleep(interval)
