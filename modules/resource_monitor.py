@@ -60,6 +60,27 @@ class ResourceMonitor:
             logger.warning(f"Metric ID for {metric_name} not found in counter map for entity {entity_name_for_log}!")
             return 0 # Return 0 to match behavior of other error paths in this func
 
+        # --- START NEW DEEPER DIAGNOSTICS ---
+        logger.info(f"[_get_performance_data] About to call QueryPerf for entity '{entity_name_for_log}' (_moId: {entity._moId}).")
+        
+        si_type = type(self.service_instance)
+        logger.info(f"[_get_performance_data] Type of self.service_instance: {si_type}")
+        if not hasattr(self.service_instance, '_moId'):
+            logger.error("[_get_performance_data] CRITICAL: self.service_instance has no _moId!")
+        else:
+            logger.info(f"[_get_performance_data] self.service_instance._moId: {self.service_instance._moId}")
+
+        content_type = type(self.service_instance.content)
+        logger.info(f"[_get_performance_data] Type of self.service_instance.content: {content_type}")
+
+        perf_manager_type = type(self.performance_manager)
+        logger.info(f"[_get_performance_data] Type of self.performance_manager: {perf_manager_type}")
+        if not hasattr(self.performance_manager, '_moId'):
+            logger.error("[_get_performance_data] CRITICAL: self.performance_manager has no _moId!")
+        else:
+            logger.info(f"[_get_performance_data] self.performance_manager._moId: {self.performance_manager._moId}")
+        # --- END NEW DEEPER DIAGNOSTICS ---
+
         try:
             query_results = self.performance_manager.QueryPerf(
                 querySpec=[
