@@ -47,6 +47,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[logging.StreamHandler(sys.stdout)] # Ensure output to console
     )
+    logging.getLogger('fdrs').setLevel(logging.DEBUG)
     # The module-level logger 'logger' will now use this basicConfig.
 
     logger.info("Starting FDRS...")
