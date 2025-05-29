@@ -1,8 +1,8 @@
 from pyVmomi import vim
 import time
-from modules.logger import Logger
+import logging
 
-logger = Logger()
+logger = logging.getLogger('fdrs')
 
 class ResourceMonitor:
     """
