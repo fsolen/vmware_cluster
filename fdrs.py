@@ -11,9 +11,13 @@ from modules.cluster_state import ClusterState
 from modules.load_evaluator import LoadEvaluator
 from modules.migration_planner import MigrationManager
 from modules.scheduler import Scheduler
-from modules.logger import Logger
+# Removed: from modules.logger import Logger
+import logging # Added for standard Python logging
+import sys # Added for sys.stdout
 
-logger = Logger()
+# logger = Logger() # Removed custom logger instantiation
+# Initialize logger at module level, will be configured in main()
+logger = logging.getLogger('fdrs') # Use 'fdrs' as the main logger name
 
 def parse_args():
     """
@@ -36,6 +40,16 @@ def main():
 
     args = parse_args()
 
+    # Configure standard Python logging
+    logging.basicConfig(
+        level=logging.DEBUG, # Set to DEBUG to capture all levels from modules
+        format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)] # Ensure output to console
+    )
+    logging.getLogger('fdrs').setLevel(logging.DEBUG)
+    # The module-level logger 'logger' will now use this basicConfig.
+
     logger.info("Starting FDRS...")
     connection_manager = ConnectionManager(args.vcenter, args.username, args.password)
     service_instance = connection_manager.connect()
@@ -50,7 +64,9 @@ def main():
         constraint_manager = ConstraintManager(cluster_state)
         constraint_manager.apply()
         # Plan and execute migrations for anti-affinity violations
-        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+        # Instantiate LoadEvaluator even for anti-affinity for consistent MigrationManager instantiation
+        load_evaluator = LoadEvaluator(state['hosts']) 
+        migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
         migrations = migration_planner.plan_migrations()
         if migrations:
             scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
@@ -69,10 +85,10 @@ def main():
         # Consider applying constraints only if migrations are attempted or part of planner
         # constraint_manager.apply() # This might be better inside MigrationManager or just before planning specific moves
 
-        migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+        migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
 
         # Log statistical imbalance for informational purposes
-        statistical_imbalance_detected = load_evaluator.evaluate_imbalance(metrics=metrics_list, aggressiveness=args.aggressiveness)
+        statistical_imbalance_detected = load_evaluator.evaluate_imbalance(metrics_to_check=metrics_list, aggressiveness=args.aggressiveness)
         if statistical_imbalance_detected:
             logger.info("Statistical load imbalance detected by LoadEvaluator. MigrationPlanner will now determine actions.")
         else:
@@ -102,7 +118,7 @@ def main():
     logger.info("Running default FDRS workflow (evaluating load and planning migrations if needed)...")
     load_evaluator = LoadEvaluator(state['hosts'])
     constraint_manager = ConstraintManager(cluster_state)
-    migration_planner = MigrationManager(cluster_state, constraint_manager, aggressiveness=args.aggressiveness)
+    migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
 
     # Log statistical imbalance for informational purposes
     statistical_imbalance_detected = load_evaluator.evaluate_imbalance(aggressiveness=args.aggressiveness)

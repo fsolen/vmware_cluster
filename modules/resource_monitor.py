@@ -1,8 +1,8 @@
 from pyVmomi import vim
 import time
-from modules.logger import Logger
+import logging
 
-logger = Logger()
+logger = logging.getLogger('fdrs')
 
 class ResourceMonitor:
     """
@@ -30,46 +30,99 @@ class ResourceMonitor:
         return counter_map
 
     def _get_performance_data(self, entity, metric_name, interval=20):
-        content = self.service_instance.RetrieveContent()
+        content = self.service_instance.RetrieveContent() # This might be inefficient to call repeatedly. Consider if it can be called once per ResourceMonitor instance or less frequently. (Out of scope for this immediate fix)
         metric_id = self.counter_map.get(metric_name)
+
+        # --- START DIAGNOSTIC CODE ---
+        entity_name_for_log = getattr(entity, 'name', str(entity)) # Get name if available, else string form
+        logger.debug(f"[_get_performance_data] Processing entity: {entity_name_for_log}, Type: {type(entity)}, For Metric: {metric_name}")
+
+        if isinstance(entity, str):
+            logger.error(f"[_get_performance_data] CRITICAL: Entity for metric '{metric_name}' is a STRING: '{entity}'. This will cause _moId error.")
+            # Depending on desired behavior, either raise an exception or return a default value.
+            # Returning a default to see if other entities are processed.
+            return 0 # Or None, consistent with other early returns for errors
+
+        if not hasattr(entity, '_moId'):
+            logger.error(f"[_get_performance_data] CRITICAL: Entity '{entity_name_for_log}' of type {type(entity)} does not have _moId attribute. Metric: {metric_name}")
+            # Returning a default
+            return 0 # Or None
+        
+        if entity._moId is None: # Check if _moId attribute exists but is None
+            logger.error(f"[_get_performance_data] CRITICAL: Entity '{entity_name_for_log}' of type {type(entity)} has _moId value of None. Metric: {metric_name}")
+            return 0 # Or None, consistent with other error returns
+
+        # This log line should now only be reached if _moId exists and is not None
+        logger.debug(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
+        # --- END DIAGNOSTIC CODE ---
+
         if not metric_id:
-            logger.warning(f"Metric ID for {metric_name} not found in counter map for entity {entity.name if hasattr(entity, 'name') else 'unknown entity'}!")
-            return None
+            logger.warning(f"Metric ID for {metric_name} not found in counter map for entity {entity_name_for_log}!")
+            return 0 # Return 0 to match behavior of other error paths in this func
+
+        # --- START NEW DEEPER DIAGNOSTICS ---
+        logger.debug(f"[_get_performance_data] About to call QueryPerf for entity '{entity_name_for_log}' (_moId: {entity._moId}).")
+        
+        si_type = type(self.service_instance)
+        logger.debug(f"[_get_performance_data] Type of self.service_instance: {si_type}")
+        if not hasattr(self.service_instance, '_moId'):
+            logger.error("[_get_performance_data] CRITICAL: self.service_instance has no _moId!")
+        else:
+            logger.debug(f"[_get_performance_data] self.service_instance._moId: {self.service_instance._moId}")
+
+        content_type = type(self.service_instance.content)
+        logger.debug(f"[_get_performance_data] Type of self.service_instance.content: {content_type}")
+
+        perf_manager_type = type(self.performance_manager)
+        logger.debug(f"[_get_performance_data] Type of self.performance_manager: {perf_manager_type}")
+        if not hasattr(self.performance_manager, '_moId'):
+            logger.error("[_get_performance_data] CRITICAL: self.performance_manager has no _moId!")
+        else:
+            logger.debug(f"[_get_performance_data] self.performance_manager._moId: {self.performance_manager._moId}")
+        # --- END NEW DEEPER DIAGNOSTICS ---
+
+        query_spec_list = [
+            vim.PerformanceManager.QuerySpec(
+                entity=entity,
+                metricId=[vim.PerformanceManager.MetricId(counterId=metric_id, instance='')],
+                intervalId=interval,
+                maxSample=1
+            )
+        ]
 
         try:
-            query_results = self.performance_manager.QueryPerf(
-                querySpec=[
-                    vim.PerformanceManager.QuerySpec(
-                        entity=entity,
-                        metricId=[vim.PerformanceManager.MetricId(counterId=metric_id, instance='')],
-                        intervalId=interval,
-                        maxSample=1
-                    )
-                ]
-            )
-
+            # Log right before the call
+            logger.debug(f"[_get_performance_data] Attempting QueryPerf for entity: {getattr(entity, 'name', str(entity))} (_moId: {getattr(entity, '_moId', 'N/A')})")
+            query_results = self.performance_manager.QueryPerf(querySpec=query_spec_list)
+            
+            # Process query_results INSIDE the try block
             if query_results and len(query_results) > 0:
-                metric_series_list = query_results[0].value # This is a list of MetricSeries objects
+                metric_series_list = query_results[0].value
                 if metric_series_list and len(metric_series_list) > 0:
-                    metric_series = metric_series_list[0] # First MetricSeries
+                    metric_series = metric_series_list[0]
                     if hasattr(metric_series, 'value') and metric_series.value and len(metric_series.value) > 0:
-                        # metric_series.value is the list of actual data points (e.g., integers for IntSeries)
                         scalar_value = metric_series.value[0]
-                        if scalar_value is None: # Handle if the specific sample value is None
-                            logger.warning(f"Metric {metric_name} for {entity.name if hasattr(entity, 'name') else 'entity'} has a None value in its series.")
-                            return 0 # Default to 0 if specific sample value is None
-                        return scalar_value # Return the scalar value
+                        if scalar_value is None:
+                            logger.warning(f"Metric {metric_name} for {entity_name_for_log} has a None value in its series.")
+                            return 0
+                        return scalar_value
                     else:
-                        logger.warning(f"Metric {metric_name} for {entity.name if hasattr(entity, 'name') else 'entity'} has empty or missing 'value' list in its series.")
+                        logger.warning(f"Metric {metric_name} for {entity_name_for_log} has empty or missing 'value' list in its series.")
                 else:
-                    logger.warning(f"No metric series list found for {metric_name} on {entity.name if hasattr(entity, 'name') else 'entity'}.")
+                    logger.warning(f"No metric series list found for {metric_name} on {entity_name_for_log}.")
             else:
-                logger.info(f"No performance data returned for {metric_name} on {entity.name if hasattr(entity, 'name') else 'entity'}. This might be normal if the counter is not applicable or data is not yet available.")
-            return 0 # Default to 0 if no data found or any other issue
-        except Exception as e:
-            # Log specifics about the entity if possible
-            entity_name = getattr(entity, 'name', 'unknown entity')
-            logger.error(f"Error fetching scalar performance data for {metric_name} on {entity_name}: {e}")
+                logger.debug(f"No performance data returned for {metric_name} on {entity_name_for_log}. This might be normal.")
+            return 0 # Default if no data found or any other issue after successful query
+
+        except AttributeError as ae: # Catch AttributeError specifically
+            # entity_name_for_log is defined at the start of the method
+            logger.error(f"[_get_performance_data] AttributeError caught for entity '{entity_name_for_log}' (_moId: {getattr(entity, '_moId', 'N/A')}) during QueryPerf or result processing. Exact error: {str(ae)}")
+            logger.error(f"[_get_performance_data] Entity type processed was: {type(entity)}")
+            return 0 
+        
+        except Exception as e: # General exception handler
+            # entity_name_for_log is defined at the start of the method
+            logger.error(f"Error fetching or processing performance data for {metric_name} on {entity_name_for_log} (Type: {type(entity)}): {e}")
             return 0 # Default to 0 on error
 
     def get_vm_metrics(self, vm):
@@ -127,40 +180,52 @@ class ResourceMonitor:
                 host_metrics[metric_key] = scalar_metric_value
 
         # Add capacity information
-        host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
-        host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
-        
-        # Set reasonable defaults for IO capacities (These are rough estimates, real values are hard to get)
-        host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s 
-        host_metrics["network_capacity"] = (host.hardware.networkInfo.pnic[0].linkSpeed * len(host.hardware.networkInfo.pnic)) / 8.0 if host.hardware.networkInfo and host.hardware.networkInfo.pnic else 1250 # Example: 10 Gbps in MB/s (10000 / 8)
+        try:
+            host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
+            host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
+            
+            # Disk I/O capacity is an estimated value.
+            host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s (estimated)
+            
+            # Network capacity calculation
+            network_capacity_val = 1250.0 # Default value as float
+            if (host.config and hasattr(host.config, 'network') and 
+                host.config.network and hasattr(host.config.network, 'pnic') and 
+                host.config.network.pnic):
+                pnics = host.config.network.pnic
+                # This inner try-except is for pNIC processing specifically.
+                # An error here will use default network_capacity_val and log a warning, then continue.
+                try:
+                    valid_link_speeds = []
+                    for pnic_obj in pnics: 
+                        if hasattr(pnic_obj, 'linkSpeed') and \
+                           pnic_obj.linkSpeed is not None and \
+                           hasattr(pnic_obj.linkSpeed, 'speedMb') and \
+                           isinstance(pnic_obj.linkSpeed.speedMb, int):
+                            valid_link_speeds.append(pnic_obj.linkSpeed.speedMb)
+                        elif hasattr(pnic_obj, 'linkSpeed') and pnic_obj.linkSpeed is not None and hasattr(pnic_obj.linkSpeed, 'speedMb'):
+                            logger.warning(f"Host '{host.name}', pNIC '{pnic_obj.device}': linkSpeed.speedMb found but is not an integer (type: {type(pnic_obj.linkSpeed.speedMb)} value: {pnic_obj.linkSpeed.speedMb}). Skipping this pNIC for network capacity sum.")
 
+                    if valid_link_speeds:
+                        total_link_speed_mbps = sum(valid_link_speeds) 
+                        network_capacity_val = total_link_speed_mbps / 8.0 
+                        if network_capacity_val == 0: 
+                            logger.warning(f"Host '{host.name}': Sum of valid pNIC link speeds is 0. Defaulting network capacity.")
+                            network_capacity_val = 1250.0
+                    else:
+                        logger.warning(f"Host '{host.name}': No valid integer link speeds (speedMb) found for pNICs. Defaulting network capacity.")
+                except Exception as e_pnic: # Catch errors during pNIC processing
+                    logger.warning(f"Host '{host.name}': Error calculating network capacity from pNICs: {e_pnic}. Defaulting network capacity.")
+                    # network_capacity_val remains 1250.0 (default set at start of network calc block)
+            else:
+                logger.warning(f"Host '{host.name}': Could not retrieve pNIC information. Defaulting network capacity.")
+            host_metrics["network_capacity"] = network_capacity_val
+
+        except Exception as e:
+            logger.error(f"[ResourceMonitor.get_host_metrics] Error fetching capacity for host '{getattr(host, 'name', str(host))}': {e}. Capacities will be defaulted.")
+            host_metrics["cpu_capacity"] = 0
+            host_metrics["memory_capacity"] = 0
+            host_metrics["disk_io_capacity"] = 1 # Use 1 to prevent potential division by zero
+            host_metrics["network_capacity"] = 1 # Use 1 to prevent potential division by zero
+            
         return host_metrics
-
-    def monitor(self, interval=5):
-        """
-        Main loop to monitor all VMs and Hosts every 'interval' seconds.
-        :param interval: The time between each metric fetch (default 5 seconds)
-        """
-        while True:
-            # Fetch VM metrics
-            logger.info("Fetching VM metrics...")
-            vms = self.service_instance.content.viewManager.CreateContainerView(
-                self.service_instance.content.rootFolder, [vim.VirtualMachine], True
-            )
-            for vm in vms.view:
-                vm_metrics = self.get_vm_metrics(vm)
-                if vm_metrics:
-                    logger.info(f"VM: {vm.name} Metrics: {vm_metrics}")
-
-            # Fetch Host metrics
-            logger.info("Fetching Host metrics...")
-            hosts = self.service_instance.content.viewManager.CreateContainerView(
-                self.service_instance.content.rootFolder, [vim.HostSystem], True
-            )
-            for host in hosts.view:
-                host_metrics = self.get_host_metrics(host)
-                if host_metrics:
-                    logger.info(f"Host: {host.name} Metrics: {host_metrics}")
-
-            # Sleep for the interval
-            time.sleep(interval)
