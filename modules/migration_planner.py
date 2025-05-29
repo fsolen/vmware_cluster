@@ -351,7 +351,7 @@ class MigrationManager:
                              continue
 
 
-                        target_host_obj = self._find_better_host_for_balancing(vm_to_move, source_host_obj, all_hosts_objects, active_imbalance_details_for_host_finding)
+                        target_host_obj = self._find_better_host_for_balancing(vm_to_move, source_host_obj, all_hosts_objects, active_imbalance_details_for_host_finding, host_resource_percentages)
                         
                         if target_host_obj:
                             migrations.append({'vm': vm_to_move, 'target_host': target_host_obj, 'reason': f"Resource Balancing ({', '.join(move_reason_details)})"})

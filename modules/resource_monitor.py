@@ -143,22 +143,34 @@ class ResourceMonitor:
         if (host.config and hasattr(host.config, 'network') and 
             host.config.network and hasattr(host.config.network, 'pnic') and 
             host.config.network.pnic):
-            pnics = host.config.network.pnic # Assign to variable as per example
+            pnics = host.config.network.pnic
             try:
-                # Filter out None linkSpeeds and sum valid ones, accessing speedMb attribute
-                valid_link_speeds = [p.linkSpeed.speedMb for p in pnics if hasattr(p, 'linkSpeed') and p.linkSpeed is not None and hasattr(p.linkSpeed, 'speedMb') and p.linkSpeed.speedMb is not None]
-                if valid_link_speeds: # Check if the list of valid speeds is not empty
-                    total_link_speed_mbps = sum(valid_link_speeds) # speedMb is typically in Mbps
-                    network_capacity_val = total_link_speed_mbps / 8.0 # Convert Mbps to MBps
+                valid_link_speeds = []
+                for pnic_obj in pnics: # Renamed p to pnic_obj for clarity
+                    if hasattr(pnic_obj, 'linkSpeed') and \
+                       pnic_obj.linkSpeed is not None and \
+                       hasattr(pnic_obj.linkSpeed, 'speedMb') and \
+                       isinstance(pnic_obj.linkSpeed.speedMb, int): # Check type
+                        valid_link_speeds.append(pnic_obj.linkSpeed.speedMb)
+                    elif hasattr(pnic_obj, 'linkSpeed') and pnic_obj.linkSpeed is not None and hasattr(pnic_obj.linkSpeed, 'speedMb'):
+                        # Log if speedMb exists but is not an int (and not None, covered by isinstance)
+                        logger.warning(f"Host '{host.name}', pNIC '{pnic_obj.device}': linkSpeed.speedMb found but is not an integer (type: {type(pnic_obj.linkSpeed.speedMb)} value: {pnic_obj.linkSpeed.speedMb}). Skipping this pNIC for network capacity sum.")
+
+                if valid_link_speeds:
+                    total_link_speed_mbps = sum(valid_link_speeds) 
+                    network_capacity_val = total_link_speed_mbps / 8.0 
+                    if network_capacity_val == 0: # If sum was 0 (e.g. all valid speeds were 0)
+                        logger.warning(f"Host '{host.name}': Sum of valid pNIC link speeds is 0. Defaulting network capacity.")
+                        network_capacity_val = 1250.0
                 else:
-                    logger.warning(f"Host '{host.name}': No valid link speeds (speedMb) found for pNICs. Defaulting network capacity.")
-                    # network_capacity_val remains 1250.0 (default)
-            except Exception as e: # Catch any other unexpected errors during summation
+                    logger.warning(f"Host '{host.name}': No valid integer link speeds (speedMb) found for pNICs. Defaulting network capacity.")
+                    # network_capacity_val remains 1250.0 (default set at start)
+            except Exception as e:
                 logger.warning(f"Host '{host.name}': Error calculating network capacity from pNICs: {e}. Defaulting.")
-                # network_capacity_val remains 1250.0 (default)
+                # network_capacity_val remains 1250.0 (default set at start)
         else:
-            logger.warning(f"Host '{host.name}': Could not retrieve pNIC information (host.config.network.pnic not found or empty). Defaulting network capacity.")
-            # network_capacity_val remains 1250.0 (default)
+            logger.warning(f"Host '{host.name}': Could not retrieve pNIC information. Defaulting network capacity.")
+            # network_capacity_val remains 1250.0 (default set at start)
         host_metrics["network_capacity"] = network_capacity_val
 
         return host_metrics
