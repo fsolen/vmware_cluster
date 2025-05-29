@@ -16,7 +16,7 @@ class ConstraintManager:
         '''
         logger.info("[ConstraintManager] Grouping VMs by prefix for Anti-Affinity rules...")
         self.vm_distribution = {}
-        all_vms = self.cluster_state.get_all_vms() 
+        all_vms = self.cluster_state.vms # Use direct attribute
 
         if not all_vms:
             logger.info("[ConstraintManager] No VMs found in cluster state.")
@@ -45,7 +45,7 @@ class ConstraintManager:
         """
         logger.info("[ConstraintManager] Calculating Anti-Affinity violations...")
         all_violations = []
-        active_hosts = self.cluster_state.get_all_hosts() 
+        active_hosts = self.cluster_state.hosts # Use direct attribute
 
         if not active_hosts or len(active_hosts) <= 1:
             logger.info("[ConstraintManager] Not enough active hosts (<2) to apply anti-affinity distribution rules.")
@@ -118,7 +118,7 @@ class ConstraintManager:
             return None
         source_host_name = source_host_obj.name
 
-        active_hosts = self.cluster_state.get_all_hosts()
+        active_hosts = self.cluster_state.hosts # Use direct attribute
         if not active_hosts or len(active_hosts) <= 1:
             logger.info("[ConstraintManager] Not enough active hosts to find a preferred host.")
             return None

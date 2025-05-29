@@ -31,7 +31,7 @@ class MigrationManager:
         # For balancing, it should always have a source_host_obj.
         source_host_name = source_host_obj.name if source_host_obj else None
 
-        all_active_hosts = self.cluster_state.get_all_hosts()
+        all_active_hosts = self.cluster_state.hosts # Use direct attribute
         if not all_active_hosts or len(all_active_hosts) <= 1:
             logger.debug("[MigrationPlanner_AA_Check] Not enough active hosts (<2) for anti-affinity to apply. Safe.")
             return True
@@ -264,7 +264,7 @@ class MigrationManager:
             
             # Identify most and least loaded hosts based on overall or specific imbalances
             # This needs LoadEvaluator to provide sorted host lists or detailed metrics per host
-            all_hosts_objects = self.cluster_state.get_all_hosts()
+            all_hosts_objects = self.cluster_state.hosts # Use direct attribute
             
             # Create a list of hosts sorted by overall utilization (descending) - simplistic approach
             # A more robust approach would be to get this from LoadEvaluator or sort based on the specific imbalanced metrics
