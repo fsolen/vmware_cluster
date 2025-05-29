@@ -317,7 +317,7 @@ class MigrationManager:
                         # A better check: if host's usage of res_name is part of the 'max_val' in imbalance_details[res_name]['max_val']
                         # For now, let's assume any host significantly above average for an imbalanced metric is a candidate source
                         # A simpler heuristic: if a host's usage for an imbalanced resource is high.
-                        avg_usage_for_res = imbalance_details.get(res_name, {}).get('avg_val', 50) # Default to 50 if no avg
+                        avg_usage_for_res = imbalance_details.get(res_name, {}).get('avg_usage', 50) # Default to 50 if no avg_usage
                         if source_host_metrics_pct.get(res_name, 0) > avg_usage_for_res + (res_threshold / 2.0): # If host is above avg + half_threshold
                              move_reason_details.append(f"high {res_name} ({source_host_metrics_pct.get(res_name,0):.1f}%)")
 

@@ -145,13 +145,13 @@ class ResourceMonitor:
             host.config.network.pnic):
             pnics = host.config.network.pnic # Assign to variable as per example
             try:
-                # Filter out None linkSpeeds and sum valid ones
-                valid_link_speeds = [p.linkSpeed for p in pnics if hasattr(p, 'linkSpeed') and p.linkSpeed is not None]
+                # Filter out None linkSpeeds and sum valid ones, accessing speedMb attribute
+                valid_link_speeds = [p.linkSpeed.speedMb for p in pnics if hasattr(p, 'linkSpeed') and p.linkSpeed is not None and hasattr(p.linkSpeed, 'speedMb') and p.linkSpeed.speedMb is not None]
                 if valid_link_speeds: # Check if the list of valid speeds is not empty
-                    total_link_speed_mbps = sum(valid_link_speeds) # linkSpeed is typically in Mbps
+                    total_link_speed_mbps = sum(valid_link_speeds) # speedMb is typically in Mbps
                     network_capacity_val = total_link_speed_mbps / 8.0 # Convert Mbps to MBps
                 else:
-                    logger.warning(f"Host '{host.name}': No valid link speeds found for pNICs (all were None or missing linkSpeed attr). Defaulting network capacity.")
+                    logger.warning(f"Host '{host.name}': No valid link speeds (speedMb) found for pNICs. Defaulting network capacity.")
                     # network_capacity_val remains 1250.0 (default)
             except Exception as e: # Catch any other unexpected errors during summation
                 logger.warning(f"Host '{host.name}': Error calculating network capacity from pNICs: {e}. Defaulting.")

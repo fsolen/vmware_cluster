@@ -83,39 +83,68 @@ class LoadEvaluator:
             metrics_to_check = ['cpu', 'memory', 'disk', 'network']
 
         allowed_thresholds = self.get_thresholds(aggressiveness) 
-        imbalance_found = False
+        imbalance_results = {}
+        # overall_imbalance_found = False # Not strictly needed if MigrationManager checks individual flags
 
         for resource_name in metrics_to_check:
-            percentages = all_metrics_data.get(resource_name)
+            percentages = all_metrics_data.get(resource_name, []) # Default to empty list
+            resource_threshold = allowed_thresholds.get(resource_name) # Get threshold for the resource
             
+            if resource_threshold is None: 
+                logger.error(f"[LoadEvaluator] Critical: No threshold defined for resource: {resource_name}. Skipping this resource.")
+                # Optionally add a placeholder to imbalance_results or skip
+                imbalance_results[resource_name] = {
+                    'is_imbalanced': False, 'current_diff': 0, 'threshold': 0, 
+                    'min_usage': 0, 'max_usage': 0, 'avg_usage': 0, 'all_percentages': []
+                }
+                continue 
+
             if not percentages or len(percentages) < 2:
-                logger.debug(f"[LoadEvaluator] Not enough data points for resource '{resource_name}' (count: {len(percentages) if percentages else 0}). Considered balanced.")
+                logger.debug(f"[LoadEvaluator] Not enough data points for resource '{resource_name}' (count: {len(percentages)}), considered balanced.")
+                imbalance_results[resource_name] = {
+                    'is_imbalanced': False, 'current_diff': 0, 'threshold': resource_threshold, 
+                    'min_usage': 0, 'max_usage': 0, 'avg_usage': 0, 'all_percentages': percentages
+                }
                 continue
 
             current_min_usage = min(percentages)
             current_max_usage = max(percentages)
+            current_avg_usage = sum(percentages) / len(percentages) # len will not be 0 here
             current_diff = current_max_usage - current_min_usage
             
-            resource_threshold = allowed_thresholds.get(resource_name)
-            if resource_threshold is None: 
-                logger.error(f"[LoadEvaluator] Critical: No threshold defined for resource: {resource_name}.")
-                continue 
-
-            logger.info(f"[LoadEvaluator] Resource '{resource_name}': Min Usage={current_min_usage:.2f}%, Max Usage={current_max_usage:.2f}%, Difference={current_diff:.2f}%")
-
+            is_res_imbalanced = False
             if current_diff > resource_threshold:
                 logger.warning(f"[LoadEvaluator] Resource '{resource_name}' is imbalanced. Difference {current_diff:.2f}% > Threshold {resource_threshold:.2f}% (Aggressiveness: {aggressiveness})")
-                imbalance_found = True
+                is_res_imbalanced = True
+                # overall_imbalance_found = True 
             else:
                 logger.info(f"[LoadEvaluator] Resource '{resource_name}' is balanced. Difference {current_diff:.2f}% <= Threshold {resource_threshold:.2f}% (Aggressiveness: {aggressiveness})")
 
-        return imbalance_found
+            imbalance_results[resource_name] = {
+                'is_imbalanced': is_res_imbalanced,
+                'current_diff': round(current_diff, 2),
+                'threshold': resource_threshold,
+                'min_usage': round(current_min_usage, 2),
+                'max_usage': round(current_max_usage, 2),
+                'avg_usage': round(current_avg_usage, 2), # Consistent with MigrationManager's expectation of 'avg_usage'
+                'all_percentages': [round(p, 2) for p in percentages]
+            }
+        
+        # Return the dictionary containing details for all checked resources.
+        # MigrationManager can iterate this and check 'is_imbalanced' for each.
+        return imbalance_results
 
     def is_balanced(self, metrics=None, aggressiveness=3):
-        return not self.evaluate_imbalance(metrics_to_check=metrics, aggressiveness=aggressiveness)
+        imbalance_details = self.evaluate_imbalance(metrics_to_check=metrics, aggressiveness=aggressiveness)
+        if not imbalance_details: # Empty dict if, for example, metrics_to_check was empty
+            return True
+        for resource_name, details in imbalance_details.items():
+            if details.get('is_imbalanced', False): # Use .get for safety, though key should exist
+                return False # Found an imbalanced resource
+        return True # All resources are balanced
 
     def get_resource_usage_lists(self):
-        if not isinstance(self.hosts, list) or not all(isinstance(h, dict) for h in self.hosts if h is not None): # Added check for h is not None
+        if not isinstance(self.hosts, list) or not all(isinstance(h, dict) for h in self.hosts if h is not None):
             logger.error("[LoadEvaluator] self.hosts is not a list of dictionaries or contains None values.")
             return [], [], [], []
 
