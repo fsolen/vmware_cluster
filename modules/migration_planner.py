@@ -76,11 +76,11 @@ class MigrationManager:
         # These thresholds are distinct from LoadEvaluator's balancing thresholds.
         # This method needs access to VM's resource requirements and host's current load + capacity.
 
-        vm_metrics = self.cluster_state.get_vm_metrics(vm.name) # Needs to provide actual usage or allocation
-        host_current_metrics = self.cluster_state.get_host_metrics(host_obj.name) # Current usage
-        host_capacity = self.cluster_state.get_host_capacity(host_obj.name) # Total capacity
+        vm_metrics = self.cluster_state.vm_metrics.get(vm.name, {})
+        host_current_metrics = self.cluster_state.host_metrics.get(host_obj.name, {})
+        # host_capacity is part of host_current_metrics
 
-        if not vm_metrics or not host_current_metrics or not host_capacity:
+        if not vm_metrics or not host_current_metrics: # host_capacity removed from this check
             logger.warning(f"[MigrationPlanner_FitCheck] Missing metrics for VM '{vm.name}' or host '{host_obj.name}'. Cannot perform fit check.")
             return False
 
@@ -94,12 +94,14 @@ class MigrationManager:
         vm_cpu_req = vm_metrics.get('cpu_usage_abs', vm_metrics.get('cpu_allocation', 0)) # Absolute CPU units (e.g., MHz)
         vm_mem_req = vm_metrics.get('memory_usage_abs', vm_metrics.get('memory_allocation_bytes', 0)) # Absolute Memory (e.g., Bytes)
 
-        # Host capacity (ensure these keys exist in your host_capacity)
-        host_cpu_cap = host_capacity.get('cpu_capacity_mhz', 1) # Total CPU
-        host_mem_cap = host_capacity.get('memory_capacity_bytes', 1) # Total Memory
+        # Host capacity (ensure these keys exist in host_current_metrics)
+        host_cpu_cap = host_current_metrics.get('cpu_capacity', 1) # Total CPU (from host_metrics)
+        host_mem_cap = host_current_metrics.get('memory_capacity', 1) # Total Memory (from host_metrics)
 
         # Host current usage (ensure these keys exist in your host_current_metrics)
-        host_cpu_curr = host_current_metrics.get('cpu_usage_abs', 0) # Current absolute CPU usage
+        # Note: 'cpu_usage_abs' for hosts is not directly stored; 'cpu_usage' in host_metrics is sum of VM abs.
+        # This logic assumes host_current_metrics contains the summed absolute usage.
+        host_cpu_curr = host_current_metrics.get('cpu_usage', 0) # Sum of VM absolute CPU usage from host_metrics
         host_mem_curr = host_current_metrics.get('memory_usage_abs', 0) # Current absolute memory usage
 
         projected_cpu_abs = host_cpu_curr + vm_cpu_req
@@ -139,7 +141,7 @@ class MigrationManager:
         # Sort VMs by their contribution to the imbalanced resource, or general load if no specific resource
         # This requires VM metrics (cpu_usage_abs, memory_usage_abs etc.)
         def sort_key(vm):
-            metrics = self.cluster_state.get_vm_metrics(vm.name)
+            metrics = self.cluster_state.vm_metrics.get(vm.name, {})
             if not metrics: return 0
             if imbalanced_resource == 'cpu':
                 return metrics.get('cpu_usage_abs', 0) # Absolute CPU usage
