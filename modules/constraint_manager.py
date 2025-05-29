@@ -27,7 +27,11 @@ class ConstraintManager:
                 logger.warning(f"[ConstraintManager] VM with invalid name or missing name attribute skipped: {getattr(vm, 'name', 'UnknownVM')}")
                 continue
             
-            short_name = vm.name[:-2]
+            name_part = vm.name.rstrip('0123456789')
+            if name_part: # Ensure rstrip didn't leave an empty string
+                short_name = name_part
+            else: 
+                short_name = vm.name # Use original name if rstrip results in empty (e.g. name is "123")
 
             if short_name not in self.vm_distribution:
                 self.vm_distribution[short_name] = []
