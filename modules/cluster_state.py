@@ -110,31 +110,35 @@ class ClusterState:
         Uses ResourceMonitor for I/O metrics and vm.summary.quickStats for absolute CPU/Memory.
         """
         self.vm_metrics = {}
-        logger.info("[ClusterState] Starting annotation of VMs with metrics...") # Add overall start log
-        for vm_obj in self.vms: # Renamed vm to vm_obj
-            # --- START NEW LOG LINE ---
-            vm_name_for_log = getattr(vm_obj, 'name', 'UnknownVMObject')
-            logger.info(f"[ClusterState.annotate_vms] Processing VM: {vm_name_for_log}, Type: {type(vm_obj)}")
-            if not hasattr(vm_obj, '_moId') or vm_obj._moId is None:
-                 logger.warning(f"[ClusterState.annotate_vms] VM {vm_name_for_log} has missing or None _moId. Skipping its metric annotation.")
-                 continue
-            # --- END NEW LOG LINE ---
+        logger.info("[ClusterState] Starting annotation of VMs with metrics...")
+        for vm_obj in self.vms:
+            vm_name_for_log = "UnknownVMObject" # Default
+            try:
+                vm_name_for_log = getattr(vm_obj, 'name', 'UnknownVMObject_NoNameAttr')
+                logger.info(f"[ClusterState.annotate_vms] Processing VM: {vm_name_for_log}, Type: {type(vm_obj)}")
+                
+                if not hasattr(vm_obj, '_moId') or vm_obj._moId is None:
+                    logger.warning(f"[ClusterState.annotate_vms] VM {vm_name_for_log} has missing or None _moId. Skipping its metric annotation.")
+                    continue
+                
+                # Original logic for a VM
+                rm_vm_metrics = resource_monitor.get_vm_metrics(vm_obj)
+                self.vm_metrics[vm_obj.name] = {
+                    'cpu_usage_abs': vm_obj.summary.quickStats.overallCpuUsage or 0,
+                    'memory_usage_abs': vm_obj.summary.quickStats.guestMemoryUsage or 0,
+                    'disk_io_usage_abs': rm_vm_metrics.get('disk_io_usage', 0.0),
+                    'network_io_usage_abs': rm_vm_metrics.get('network_io_usage', 0.0),
+                    'vm_obj': vm_obj
+                }
+            except AttributeError as ae:
+                logger.error(f"[ClusterState.annotate_vms] AttributeError while processing VM '{vm_name_for_log}' (Type: {type(vm_obj)}): {ae}")
+                # Optionally, re-raise or continue to next VM
+                continue 
+            except Exception as e:
+                logger.error(f"[ClusterState.annotate_vms] Unexpected error while processing VM '{vm_name_for_log}' (Type: {type(vm_obj)}): {e}")
+                continue
 
-            # Get I/O metrics from ResourceMonitor (already in MBps)
-            rm_vm_metrics = resource_monitor.get_vm_metrics(vm_obj)
-            
-            self.vm_metrics[vm_obj.name] = {
-                # Absolute CPU usage in MHz from vSphere
-                'cpu_usage_abs': vm_obj.summary.quickStats.overallCpuUsage or 0,
-                # Absolute memory usage in MB from vSphere (guest memory usage)
-                'memory_usage_abs': vm_obj.summary.quickStats.guestMemoryUsage or 0,
-                # Disk I/O in MBps from ResourceMonitor
-                'disk_io_usage_abs': rm_vm_metrics.get('disk_io_usage', 0.0),
-                # Network I/O in MBps from ResourceMonitor
-                'network_io_usage_abs': rm_vm_metrics.get('network_io_usage', 0.0),
-                'vm_obj': vm_obj # Store the VM object itself
-            }
-        logger.info("[ClusterState] Finished annotation of VMs with metrics.") # Add overall end log
+        logger.info("[ClusterState] Finished annotation of VMs with metrics.")
 
     def annotate_hosts_with_metrics(self, resource_monitor):
         """
@@ -142,64 +146,63 @@ class ClusterState:
         Also incorporates capacity information obtained directly or via ResourceMonitor for consistency.
         """
         self.host_metrics = {}
-        logger.info("[ClusterState] Starting annotation of hosts with metrics...") # Add overall start log
-        for host_obj in self.hosts: # Renamed host to host_obj
-            # --- START NEW LOG LINE ---
-            host_name_for_log = getattr(host_obj, 'name', 'UnknownHostObject')
-            logger.info(f"[ClusterState.annotate_hosts] Processing host: {host_name_for_log}, Type: {type(host_obj)}")
-            if not hasattr(host_obj, '_moId') or host_obj._moId is None:
-                 logger.warning(f"[ClusterState.annotate_hosts] Host {host_name_for_log} has missing or None _moId. Skipping its metric annotation.")
-                 continue
-            # --- END NEW LOG LINE ---
+        logger.info("[ClusterState] Starting annotation of hosts with metrics...")
+        for host_obj in self.hosts:
+            host_name_for_log = "UnknownHostObject" # Default
+            try:
+                host_name_for_log = getattr(host_obj, 'name', 'UnknownHostObject_NoNameAttr')
+                logger.info(f"[ClusterState.annotate_hosts] Processing host: {host_name_for_log}, Type: {type(host_obj)}")
 
-            # Get host capacity info directly from host_obj or via resource_monitor if it normalizes/caches them
-            # ResourceMonitor.get_host_metrics already includes capacities.
-            # Let's ensure we use what ResourceMonitor provides for capacities for consistency,
-            # especially for estimated ones like disk/network.
-            
-            rm_host_metrics = resource_monitor.get_host_metrics(host_obj)
+                if not hasattr(host_obj, '_moId') or host_obj._moId is None:
+                    logger.warning(f"[ClusterState.annotate_hosts] Host {host_name_for_log} has missing or None _moId. Skipping its metric annotation.")
+                    continue
+                
+                # Original logic for a host
+                rm_host_metrics = resource_monitor.get_host_metrics(host_obj)
+                current_host_metrics = {
+                    'cpu_usage': 0, 
+                    'memory_usage': 0,
+                    'disk_io_usage': 0,
+                    'network_io_usage': 0,
+                    'cpu_capacity': rm_host_metrics.get('cpu_capacity', 0),
+                    'memory_capacity': rm_host_metrics.get('memory_capacity', 0),
+                    'disk_io_capacity': rm_host_metrics.get('disk_io_capacity', 1),
+                    'network_capacity': rm_host_metrics.get('network_capacity', 1),
+                    'vms': [],
+                    'host_obj': host_obj
+                }
+                for vm_on_host in self.get_vms_on_host(host_obj):
+                    vm_metrics_data = self.vm_metrics.get(vm_on_host.name, {})
+                    # ... (summation logic) ...
+                    current_host_metrics['cpu_usage'] += vm_metrics_data.get('cpu_usage_abs', 0)
+                    current_host_metrics['memory_usage'] += vm_metrics_data.get('memory_usage_abs', 0)
+                    current_host_metrics['disk_io_usage'] += vm_metrics_data.get('disk_io_usage_abs', 0)
+                    current_host_metrics['network_io_usage'] += vm_metrics_data.get('network_io_usage_abs', 0)
+                    current_host_metrics['vms'].append(vm_on_host.name)
 
-            # Initialize host metrics structure
-            current_host_metrics = {
-                'cpu_usage': 0, # Sum of VM absolute CPU usage
-                'memory_usage': 0, # Sum of VM absolute Memory usage
-                'disk_io_usage': 0, # Sum of VM absolute Disk IO
-                'network_io_usage': 0, # Sum of VM absolute Network IO
-                'cpu_capacity': rm_host_metrics.get('cpu_capacity', 0),
-                'memory_capacity': rm_host_metrics.get('memory_capacity', 0),
-                'disk_io_capacity': rm_host_metrics.get('disk_io_capacity', 1), # Default to 1 to avoid div by zero
-                'network_capacity': rm_host_metrics.get('network_capacity', 1), # Default to 1
-                'vms': [],
-                'host_obj': host_obj # Store the host object itself
-            }
-            
-            # Sum up resource usage from all VMs on this host
-            for vm_on_host in self.get_vms_on_host(host_obj): # Renamed vm to vm_on_host
-                vm_metrics_data = self.vm_metrics.get(vm_on_host.name, {})
-                current_host_metrics['cpu_usage'] += vm_metrics_data.get('cpu_usage_abs', 0)
-                current_host_metrics['memory_usage'] += vm_metrics_data.get('memory_usage_abs', 0)
-                current_host_metrics['disk_io_usage'] += vm_metrics_data.get('disk_io_usage_abs', 0)
-                current_host_metrics['network_io_usage'] += vm_metrics_data.get('network_io_usage_abs', 0)
-                current_host_metrics['vms'].append(vm_on_host.name)
-            
-            # Calculate usage percentages based on summed absolute VM consumptions and host capacities
-            current_host_metrics['cpu_usage_pct'] = (current_host_metrics['cpu_usage'] / current_host_metrics['cpu_capacity'] * 100) \
-                if current_host_metrics['cpu_capacity'] > 0 else 0
-            current_host_metrics['memory_usage_pct'] = (current_host_metrics['memory_usage'] / current_host_metrics['memory_capacity'] * 100) \
-                if current_host_metrics['memory_capacity'] > 0 else 0
-            # For Disk and Network IO, LoadEvaluator will calculate percentages using these absolute values
-            # and the capacities obtained from ResourceMonitor. So, no _pct needed here for disk/network.
-            
-            self.host_metrics[host_obj.name] = current_host_metrics
-            
-            # Logging can be verbose, ensure it's needed or adjust level/content
-            logger.debug(f"Host {host_obj.name} annotated metrics:") # Changed to debug
-            logger.debug(f"  CPU: {current_host_metrics['cpu_usage_pct']:.1f}% ({current_host_metrics['cpu_usage']}/{current_host_metrics['cpu_capacity']} MHz)")
-            logger.debug(f"  Memory: {current_host_metrics['memory_usage_pct']:.1f}% ({current_host_metrics['memory_usage']}/{current_host_metrics['memory_capacity']} MB)")
-            logger.debug(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
-            logger.debug(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
-            logger.debug(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
-        logger.info("[ClusterState] Finished annotation of hosts with metrics.") # Add overall end log
+                current_host_metrics['cpu_usage_pct'] = (current_host_metrics['cpu_usage'] / current_host_metrics['cpu_capacity'] * 100) \
+                    if current_host_metrics['cpu_capacity'] > 0 else 0
+                current_host_metrics['memory_usage_pct'] = (current_host_metrics['memory_usage'] / current_host_metrics['memory_capacity'] * 100) \
+                    if current_host_metrics['memory_capacity'] > 0 else 0
+                
+                self.host_metrics[host_obj.name] = current_host_metrics
+                
+                # Logging can be verbose, ensure it's needed or adjust level/content (already debug)
+                logger.debug(f"Host {host_obj.name} annotated metrics:")
+                logger.debug(f"  CPU: {current_host_metrics['cpu_usage_pct']:.1f}% ({current_host_metrics['cpu_usage']}/{current_host_metrics['cpu_capacity']} MHz)")
+                logger.debug(f"  Memory: {current_host_metrics['memory_usage_pct']:.1f}% ({current_host_metrics['memory_usage']}/{current_host_metrics['memory_capacity']} MB)")
+                logger.debug(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
+                logger.debug(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
+                logger.debug(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
+
+            except AttributeError as ae:
+                logger.error(f"[ClusterState.annotate_hosts] AttributeError while processing host '{host_name_for_log}' (Type: {type(host_obj)}): {ae}")
+                # Optionally, re-raise or continue to next host
+                continue
+            except Exception as e:
+                logger.error(f"[ClusterState.annotate_hosts] Unexpected error while processing host '{host_name_for_log}' (Type: {type(host_obj)}): {e}")
+                continue
+        logger.info("[ClusterState] Finished annotation of hosts with metrics.")
 
     def get_vms_on_host(self, host_object): # Renamed host to host_object
         """
