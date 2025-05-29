@@ -486,5 +486,3 @@ MigrationManager._find_better_host_for_balancing = _find_better_host_for_balanci
 # Let's adjust the call inside plan_migrations:
 # target_host_obj = self._find_better_host_for_balancing(vm_to_move, source_host_obj, all_hosts_objects, active_imbalance_details_for_host_finding, host_resource_percentages)
 # This change is made in the code above.
-
-```
