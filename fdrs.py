@@ -11,9 +11,13 @@ from modules.cluster_state import ClusterState
 from modules.load_evaluator import LoadEvaluator
 from modules.migration_planner import MigrationManager
 from modules.scheduler import Scheduler
-from modules.logger import Logger
+# Removed: from modules.logger import Logger
+import logging # Added for standard Python logging
+import sys # Added for sys.stdout
 
-logger = Logger()
+# logger = Logger() # Removed custom logger instantiation
+# Initialize logger at module level, will be configured in main()
+logger = logging.getLogger('fdrs') # Use 'fdrs' as the main logger name
 
 def parse_args():
     """
@@ -35,6 +39,15 @@ def main():
     print_banner()
 
     args = parse_args()
+
+    # Configure standard Python logging
+    logging.basicConfig(
+        level=logging.DEBUG, # Set to DEBUG to capture all levels from modules
+        format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)] # Ensure output to console
+    )
+    # The module-level logger 'logger' will now use this basicConfig.
 
     logger.info("Starting FDRS...")
     connection_manager = ConnectionManager(args.vcenter, args.username, args.password)
