@@ -35,7 +35,7 @@ class ResourceMonitor:
 
         # --- START DIAGNOSTIC CODE ---
         entity_name_for_log = getattr(entity, 'name', str(entity)) # Get name if available, else string form
-        logger.debug(f"[_get_performance_data] Processing entity: {entity_name_for_log}, Type: {type(entity)}, For Metric: {metric_name}")
+        logger.info(f"[_get_performance_data] Processing entity: {entity_name_for_log}, Type: {type(entity)}, For Metric: {metric_name}")
 
         if isinstance(entity, str):
             logger.error(f"[_get_performance_data] CRITICAL: Entity for metric '{metric_name}' is a STRING: '{entity}'. This will cause _moId error.")
@@ -48,7 +48,7 @@ class ResourceMonitor:
             # Returning a default
             return 0 # Or None
         
-        logger.debug(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
+        logger.info(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
         # --- END DIAGNOSTIC CODE ---
 
         if not metric_id:
