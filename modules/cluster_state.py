@@ -110,7 +110,16 @@ class ClusterState:
         Uses ResourceMonitor for I/O metrics and vm.summary.quickStats for absolute CPU/Memory.
         """
         self.vm_metrics = {}
+        logger.info("[ClusterState] Starting annotation of VMs with metrics...") # Add overall start log
         for vm_obj in self.vms: # Renamed vm to vm_obj
+            # --- START NEW LOG LINE ---
+            vm_name_for_log = getattr(vm_obj, 'name', 'UnknownVMObject')
+            logger.info(f"[ClusterState.annotate_vms] Processing VM: {vm_name_for_log}, Type: {type(vm_obj)}")
+            if not hasattr(vm_obj, '_moId') or vm_obj._moId is None:
+                 logger.warning(f"[ClusterState.annotate_vms] VM {vm_name_for_log} has missing or None _moId. Skipping its metric annotation.")
+                 continue
+            # --- END NEW LOG LINE ---
+
             # Get I/O metrics from ResourceMonitor (already in MBps)
             rm_vm_metrics = resource_monitor.get_vm_metrics(vm_obj)
             
@@ -125,6 +134,7 @@ class ClusterState:
                 'network_io_usage_abs': rm_vm_metrics.get('network_io_usage', 0.0),
                 'vm_obj': vm_obj # Store the VM object itself
             }
+        logger.info("[ClusterState] Finished annotation of VMs with metrics.") # Add overall end log
 
     def annotate_hosts_with_metrics(self, resource_monitor):
         """
@@ -132,7 +142,16 @@ class ClusterState:
         Also incorporates capacity information obtained directly or via ResourceMonitor for consistency.
         """
         self.host_metrics = {}
+        logger.info("[ClusterState] Starting annotation of hosts with metrics...") # Add overall start log
         for host_obj in self.hosts: # Renamed host to host_obj
+            # --- START NEW LOG LINE ---
+            host_name_for_log = getattr(host_obj, 'name', 'UnknownHostObject')
+            logger.info(f"[ClusterState.annotate_hosts] Processing host: {host_name_for_log}, Type: {type(host_obj)}")
+            if not hasattr(host_obj, '_moId') or host_obj._moId is None:
+                 logger.warning(f"[ClusterState.annotate_hosts] Host {host_name_for_log} has missing or None _moId. Skipping its metric annotation.")
+                 continue
+            # --- END NEW LOG LINE ---
+
             # Get host capacity info directly from host_obj or via resource_monitor if it normalizes/caches them
             # ResourceMonitor.get_host_metrics already includes capacities.
             # Let's ensure we use what ResourceMonitor provides for capacities for consistency,
@@ -180,6 +199,7 @@ class ClusterState:
             logger.debug(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
             logger.debug(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
             logger.debug(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
+        logger.info("[ClusterState] Finished annotation of hosts with metrics.") # Add overall end log
 
     def get_vms_on_host(self, host_object): # Renamed host to host_object
         """
