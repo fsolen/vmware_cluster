@@ -138,8 +138,24 @@ class ResourceMonitor:
         
         # Network capacity is derived from the sum of speeds of all physical NICs (pNICs).
         # This provides a more dynamic and host-specific capacity compared to a fixed estimate.
-        # If pNIC info is unavailable, a default estimate is used.
-        host_metrics["network_capacity"] = (sum(pnic.linkSpeed for pnic in host.hardware.networkInfo.pnic) / 8.0) \
-                                           if host.hardware.networkInfo and host.hardware.networkInfo.pnic else 1250 # Convert total Mbps to MB/s
+        # If pNIC info is unavailable, a default estimate (10Gbps = 1250.0 MB/s) is used.
+        network_capacity_val = 1250.0 # Default value as float
+        if (host.config and hasattr(host.config, 'network') and 
+            host.config.network and hasattr(host.config.network, 'pnic') and 
+            host.config.network.pnic):
+            try:
+                # Ensure linkSpeed is present and pnic list is not empty before summing
+                # Also, ensure all pnic objects have linkSpeed attribute
+                all_pnics_have_linkspeed = all(hasattr(pnic, 'linkSpeed') for pnic in host.config.network.pnic)
+                if host.config.network.pnic and all_pnics_have_linkspeed: # Check if list is not empty
+                    total_link_speed_mbps = sum(pnic.linkSpeed for pnic in host.config.network.pnic)
+                    network_capacity_val = total_link_speed_mbps / 8.0 # Convert total Mbps to MB/s
+                else:
+                    logger.warning(f"Host '{host.name}': pNIC list is empty or some pNICs lack linkSpeed. Defaulting network capacity.")
+            except Exception as e: # Catch any other unexpected errors during summation
+                logger.warning(f"Host '{host.name}': Error calculating network capacity from pNICs: {e}. Defaulting.")
+        else:
+            logger.warning(f"Host '{host.name}': Could not retrieve pNIC information (host.config.network.pnic not found or empty). Defaulting network capacity.")
+        host_metrics["network_capacity"] = network_capacity_val
 
         return host_metrics
