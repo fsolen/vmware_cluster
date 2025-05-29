@@ -238,6 +238,22 @@ class ClusterState:
                 return vm_obj
         return None
 
+    def get_host_by_name(self, host_name):
+        """
+        Return the host object with the given name from self.hosts.
+        Returns None if not found.
+        """
+        if not hasattr(self, 'hosts') or not self.hosts:
+            logger.warning("[ClusterState.get_host_by_name] self.hosts is not initialized or is empty.")
+            return None
+            
+        for host_obj in self.hosts:
+            if hasattr(host_obj, 'name') and host_obj.name == host_name:
+                return host_obj
+        
+        logger.warning(f"[ClusterState.get_host_by_name] Host '{host_name}' not found in self.hosts.")
+        return None
+
     def log_cluster_stats(self):
         """Log detailed cluster statistics including resource distribution"""
         if not hasattr(self, 'host_metrics') or not hasattr(self, 'vm_metrics'):

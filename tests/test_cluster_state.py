@@ -155,6 +155,69 @@ class TestClusterState(unittest.TestCase):
                 f"[ClusterState.get_vms_on_host] Provided host_object '{mock_target_host_no_moid.name}' is invalid or has no _moId. Cannot find VMs."
             )
 
+    # To patch the logger in the 'modules.cluster_state' module directly for get_host_by_name tests
+    @patch('modules.cluster_state.logger')
+    def test_get_host_by_name(self, mock_cs_logger):
+        # Setup mock hosts
+        mock_host1 = MagicMock(spec=vim.HostSystem)
+        mock_host1.name = "host-01.example.com"
+        mock_host2 = MagicMock(spec=vim.HostSystem)
+        mock_host2.name = "host-02.example.com"
+
+        self.cluster_state.hosts = [mock_host1, mock_host2]
+
+        # Scenario 1: Host Found
+        found_host = self.cluster_state.get_host_by_name("host-01.example.com")
+        self.assertIs(found_host, mock_host1)
+        mock_cs_logger.warning.assert_not_called()
+
+        # Scenario 2: Host Not Found
+        mock_cs_logger.reset_mock() # Reset mock for the next assertion
+        unknown_host = self.cluster_state.get_host_by_name("unknown-host.example.com")
+        self.assertIsNone(unknown_host)
+        mock_cs_logger.warning.assert_called_once_with(
+            "[ClusterState.get_host_by_name] Host 'unknown-host.example.com' not found in self.hosts."
+        )
+
+        # Scenario 3: self.hosts is Empty
+        mock_cs_logger.reset_mock()
+        self.cluster_state.hosts = []
+        empty_hosts_result = self.cluster_state.get_host_by_name("host-01.example.com")
+        self.assertIsNone(empty_hosts_result)
+        mock_cs_logger.warning.assert_called_once_with(
+            "[ClusterState.get_host_by_name] self.hosts is not initialized or is empty."
+        )
+
+        # Scenario 4: self.hosts is None
+        mock_cs_logger.reset_mock()
+        self.cluster_state.hosts = None
+        none_hosts_result = self.cluster_state.get_host_by_name("host-01.example.com")
+        self.assertIsNone(none_hosts_result)
+        mock_cs_logger.warning.assert_called_once_with(
+            "[ClusterState.get_host_by_name] self.hosts is not initialized or is empty."
+        )
+        
+        # Scenario 5: Host object in list lacks 'name' attribute
+        mock_cs_logger.reset_mock()
+        mock_host_no_name = MagicMock(spec_set=['_moId']) # spec_set ensures only specified attrs exist
+                                                       # Does not have 'name'
+        
+        # Re-populate hosts for this scenario
+        self.cluster_state.hosts = [mock_host_no_name, mock_host1]
+
+        # Try to find the host with a name
+        found_host_after_no_name = self.cluster_state.get_host_by_name("host-01.example.com")
+        self.assertIs(found_host_after_no_name, mock_host1)
+        mock_cs_logger.warning.assert_not_called() # Should not log for successfully finding mock_host1
+
+        # Try to find a name that would "match" the no-name host if it had one
+        mock_cs_logger.reset_mock()
+        no_name_found_result = self.cluster_state.get_host_by_name("some_name_for_no_name_host")
+        self.assertIsNone(no_name_found_result)
+        mock_cs_logger.warning.assert_called_once_with(
+            "[ClusterState.get_host_by_name] Host 'some_name_for_no_name_host' not found in self.hosts."
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
