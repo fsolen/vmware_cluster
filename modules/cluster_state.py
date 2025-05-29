@@ -95,7 +95,7 @@ class ClusterState:
         try:
             # Use vm_object consistently
             if hasattr(vm_object, 'runtime') and hasattr(vm_object.runtime, 'host') and vm_object.runtime.host:
-                return vm_object.runtime.host.name
+                return vm_object.runtime.host # Return the host object itself
             else:
                 logger.warning(f"VM '{vm_object.name}' does not have a valid host reference.")
                 return None
