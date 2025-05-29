@@ -94,36 +94,36 @@ class ResourceMonitor:
             # Log right before the call
             logger.info(f"[_get_performance_data] Attempting QueryPerf for entity: {getattr(entity, 'name', str(entity))} (_moId: {getattr(entity, '_moId', 'N/A')})")
             query_results = self.performance_manager.QueryPerf(querySpec=query_spec_list)
-        
+            
+            # Process query_results INSIDE the try block
+            if query_results and len(query_results) > 0:
+                metric_series_list = query_results[0].value
+                if metric_series_list and len(metric_series_list) > 0:
+                    metric_series = metric_series_list[0]
+                    if hasattr(metric_series, 'value') and metric_series.value and len(metric_series.value) > 0:
+                        scalar_value = metric_series.value[0]
+                        if scalar_value is None:
+                            logger.warning(f"Metric {metric_name} for {entity_name_for_log} has a None value in its series.")
+                            return 0
+                        return scalar_value
+                    else:
+                        logger.warning(f"Metric {metric_name} for {entity_name_for_log} has empty or missing 'value' list in its series.")
+                else:
+                    logger.warning(f"No metric series list found for {metric_name} on {entity_name_for_log}.")
+            else:
+                logger.info(f"No performance data returned for {metric_name} on {entity_name_for_log}. This might be normal.")
+            return 0 # Default if no data found or any other issue after successful query
+
         except AttributeError as ae: # Catch AttributeError specifically
-            logger.error(f"[_get_performance_data] AttributeError during QueryPerf for entity '{getattr(entity, 'name', str(entity))}' (_moId: {getattr(entity, '_moId', 'N/A')}). Error: {ae}")
-            logger.error(f"[_get_performance_data] Entity type was: {type(entity)}")
-            # Potentially log more details about 'entity' if possible, e.g., vars(entity) if it's simple, but be careful with pyVmomi objects
-            return 0 # Or None, consistent
+            # entity_name_for_log is defined at the start of the method
+            logger.error(f"[_get_performance_data] AttributeError caught for entity '{entity_name_for_log}' (_moId: {getattr(entity, '_moId', 'N/A')}) during QueryPerf or result processing. Exact error: {str(ae)}")
+            logger.error(f"[_get_performance_data] Entity type processed was: {type(entity)}")
+            return 0 
         
         except Exception as e: # General exception handler
-            entity_name_for_exc_log = getattr(entity, 'name', str(entity)) # Use pre-defined entity_name_for_log if preferred
-            logger.error(f"Error fetching performance data for {metric_name} on {entity_name_for_exc_log} (Type: {type(entity)}): {e}")
+            # entity_name_for_log is defined at the start of the method
+            logger.error(f"Error fetching or processing performance data for {metric_name} on {entity_name_for_log} (Type: {type(entity)}): {e}")
             return 0 # Default to 0 on error
-            
-        # Process query_results
-        if query_results and len(query_results) > 0:
-            metric_series_list = query_results[0].value
-            if metric_series_list and len(metric_series_list) > 0:
-                metric_series = metric_series_list[0]
-                if hasattr(metric_series, 'value') and metric_series.value and len(metric_series.value) > 0:
-                    scalar_value = metric_series.value[0]
-                    if scalar_value is None:
-                        logger.warning(f"Metric {metric_name} for {entity_name_for_log} has a None value in its series.")
-                        return 0
-                    return scalar_value
-                else:
-                    logger.warning(f"Metric {metric_name} for {entity_name_for_log} has empty or missing 'value' list in its series.")
-            else:
-                logger.warning(f"No metric series list found for {metric_name} on {entity_name_for_log}.")
-        else:
-            logger.info(f"No performance data returned for {metric_name} on {entity_name_for_log}. This might be normal.")
-        return 0 # Default to 0 if no data found or any other issue
 
     def get_vm_metrics(self, vm):
         vm_metrics = {}

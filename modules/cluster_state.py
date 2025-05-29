@@ -204,11 +204,30 @@ class ClusterState:
                 continue
         logger.info("[ClusterState] Finished annotation of hosts with metrics.")
 
-    def get_vms_on_host(self, host_object): # Renamed host to host_object
+    def get_vms_on_host(self, host_object): # host_object is a vim.HostSystem object
         """
         Return list of VMs currently running on the specified host.
         """
-        return [vm_obj for vm_obj in self.vms if self.get_host_of_vm(vm_obj) == host_object.name] # Use host_object.name
+        vms_on_host = []
+        # Ensure host_object is valid and has _moId before proceeding
+        if not hasattr(host_object, '_moId') or not host_object._moId:
+            host_identifier = getattr(host_object, 'name', str(host_object))
+            logger.warning(f"[ClusterState.get_vms_on_host] Provided host_object '{host_identifier}' is invalid or has no _moId. Cannot find VMs.")
+            return vms_on_host
+
+        for vm_obj in self.vms:
+            host_of_vm = self.get_host_of_vm(vm_obj) # This returns a vim.HostSystem object or None
+            
+            # Ensure host_of_vm is valid and has _moId before comparison
+            if host_of_vm and hasattr(host_of_vm, '_moId') and host_of_vm._moId:
+                if host_of_vm._moId == host_object._moId:
+                    vms_on_host.append(vm_obj)
+            elif host_of_vm: # host_of_vm exists but lacks _moId or it's None
+                vm_identifier = getattr(vm_obj, 'name', str(vm_obj))
+                host_of_vm_identifier = getattr(host_of_vm, 'name', str(host_of_vm))
+                logger.warning(f"[ClusterState.get_vms_on_host] Host '{host_of_vm_identifier}' for VM '{vm_identifier}' is invalid or has no _moId. Skipping for host comparison.")
+                
+        return vms_on_host
         
     def get_vm_by_name(self, vm_name): # Renamed name to vm_name
         """
