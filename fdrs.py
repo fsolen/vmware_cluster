@@ -87,7 +87,7 @@ def main():
         migration_planner = MigrationManager(cluster_state, constraint_manager, load_evaluator, aggressiveness=args.aggressiveness)
 
         # Log statistical imbalance for informational purposes
-        statistical_imbalance_detected = load_evaluator.evaluate_imbalance(metrics=metrics_list, aggressiveness=args.aggressiveness)
+        statistical_imbalance_detected = load_evaluator.evaluate_imbalance(metrics_to_check=metrics_list, aggressiveness=args.aggressiveness)
         if statistical_imbalance_detected:
             logger.info("Statistical load imbalance detected by LoadEvaluator. MigrationPlanner will now determine actions.")
         else:
