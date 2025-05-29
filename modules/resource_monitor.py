@@ -30,11 +30,30 @@ class ResourceMonitor:
         return counter_map
 
     def _get_performance_data(self, entity, metric_name, interval=20):
-        content = self.service_instance.RetrieveContent()
+        content = self.service_instance.RetrieveContent() # This might be inefficient to call repeatedly. Consider if it can be called once per ResourceMonitor instance or less frequently. (Out of scope for this immediate fix)
         metric_id = self.counter_map.get(metric_name)
+
+        # --- START DIAGNOSTIC CODE ---
+        entity_name_for_log = getattr(entity, 'name', str(entity)) # Get name if available, else string form
+        logger.debug(f"[_get_performance_data] Processing entity: {entity_name_for_log}, Type: {type(entity)}, For Metric: {metric_name}")
+
+        if isinstance(entity, str):
+            logger.error(f"[_get_performance_data] CRITICAL: Entity for metric '{metric_name}' is a STRING: '{entity}'. This will cause _moId error.")
+            # Depending on desired behavior, either raise an exception or return a default value.
+            # Returning a default to see if other entities are processed.
+            return 0 # Or None, consistent with other early returns for errors
+
+        if not hasattr(entity, '_moId'):
+            logger.error(f"[_get_performance_data] CRITICAL: Entity '{entity_name_for_log}' of type {type(entity)} does not have _moId attribute. Metric: {metric_name}")
+            # Returning a default
+            return 0 # Or None
+        
+        logger.debug(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
+        # --- END DIAGNOSTIC CODE ---
+
         if not metric_id:
-            logger.warning(f"Metric ID for {metric_name} not found in counter map for entity {entity.name if hasattr(entity, 'name') else 'unknown entity'}!")
-            return None
+            logger.warning(f"Metric ID for {metric_name} not found in counter map for entity {entity_name_for_log}!")
+            return 0 # Return 0 to match behavior of other error paths in this func
 
         try:
             query_results = self.performance_manager.QueryPerf(
