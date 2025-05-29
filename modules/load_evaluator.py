@@ -118,7 +118,7 @@ class LoadEvaluator:
                 is_res_imbalanced = True
                 # overall_imbalance_found = True 
             else:
-                logger.info(f"[LoadEvaluator] Resource '{resource_name}' is balanced. Difference {current_diff:.2f}% <= Threshold {resource_threshold:.2f}% (Aggressiveness: {aggressiveness})")
+                logger.debug(f"[LoadEvaluator] Resource '{resource_name}' is balanced. Difference {current_diff:.2f}% <= Threshold {resource_threshold:.2f}% (Aggressiveness: {aggressiveness})")
 
             imbalance_results[resource_name] = {
                 'is_imbalanced': is_res_imbalanced,

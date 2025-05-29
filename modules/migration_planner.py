@@ -232,11 +232,11 @@ class MigrationManager:
                 continue
 
             if vm_obj.name in vms_in_migration_plan:
-                logger.info(f"[MigrationPlanner_AA] VM '{vm_obj.name}' already part of another migration plan. Skipping for AA.")
+                logger.debug(f"[MigrationPlanner_AA] VM '{vm_obj.name}' already part of another migration plan. Skipping for AA.")
                 continue
             
             if hasattr(vm_obj, 'config') and getattr(vm_obj.config, 'template', False):
-                logger.info(f"[MigrationPlanner_AA] Skipping template VM '{vm_obj.name}' for anti-affinity migration.")
+                logger.debug(f"[MigrationPlanner_AA] Skipping template VM '{vm_obj.name}' for anti-affinity migration.")
                 continue
 
             current_host = self.cluster_state.get_host_of_vm(vm_obj)
@@ -327,7 +327,7 @@ class MigrationManager:
                     if not move_reason_details:
                         continue # This host is not a primary source for balancing moves
 
-                    logger.info(f"[MigrationPlanner_Balance] Host '{source_host_obj.name}' is a candidate source for balancing. Reasons: {', '.join(move_reason_details)}")
+                    logger.debug(f"[MigrationPlanner_Balance] Host '{source_host_obj.name}' is a candidate source for balancing. Reasons: {', '.join(move_reason_details)}")
                     
                     # Prioritize moving VMs contributing to the most imbalanced resource on this host
                     # For now, _select_vms_to_move can take a general imbalanced_resource hint

@@ -165,6 +165,46 @@ class TestResourceMonitor(unittest.TestCase):
             f"Host '{mock_host.name}': No valid integer link speeds (speedMb) found for pNICs. Defaulting network capacity."
         )
 
+    @patch('modules.resource_monitor.logger.error')
+    @patch('modules.resource_monitor.ResourceMonitor._get_performance_data', return_value=0)
+    def test_get_host_metrics_capacity_fetching_error(self, mock_get_perf_data, mock_logger_error):
+        # Prepare a mock host object designed to cause an error during capacity fetching
+        mock_host_problematic = MagicMock(spec=vim.HostSystem)
+        mock_host_problematic.name = "ProblemHost"
+        
+        # Cause an AttributeError when trying to access host.summary.hardware
+        # One way: make summary an object that doesn't have 'hardware'
+        # Another way: make summary itself raise an error, or summary.hardware be None
+        mock_host_problematic.summary = MagicMock()
+        # Make accessing summary.hardware raise an error
+        mock_host_problematic.summary.hardware = None # This will cause AttributeError when accessing numCpuCores etc.
+        # Or, for a more direct error on access of 'hardware':
+        # type(mock_host_problematic.summary).hardware = PropertyMock(side_effect=AttributeError("Simulated hardware access error"))
+
+
+        # Action
+        metrics = self.resource_monitor.get_host_metrics(mock_host_problematic)
+
+        # Assertions
+        # 1. logger.error was called
+        mock_logger_error.assert_called_once()
+        # Check if the log message contains key phrases
+        call_args_str = str(mock_logger_error.call_args)
+        self.assertIn(f"Error fetching capacity for host '{mock_host_problematic.name}'", call_args_str)
+        self.assertIn("Capacities will be defaulted.", call_args_str)
+        
+        # 2. Usage metrics are 0.0 (because _get_performance_data returns 0)
+        self.assertEqual(metrics['cpu_usage'], 0.0)
+        self.assertEqual(metrics['memory_usage'], 0.0)
+        self.assertEqual(metrics['disk_io_usage'], 0.0)
+        self.assertEqual(metrics['network_io_usage'], 0.0)
+
+        # 3. Capacity metrics are defaulted
+        self.assertEqual(metrics['cpu_capacity'], 0)
+        self.assertEqual(metrics['memory_capacity'], 0)
+        self.assertEqual(metrics['disk_io_capacity'], 1)
+        self.assertEqual(metrics['network_capacity'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

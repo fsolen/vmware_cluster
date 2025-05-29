@@ -115,7 +115,7 @@ class ClusterState:
             vm_name_for_log = "UnknownVMObject" # Default
             try:
                 vm_name_for_log = getattr(vm_obj, 'name', 'UnknownVMObject_NoNameAttr')
-                logger.info(f"[ClusterState.annotate_vms] Processing VM: {vm_name_for_log}, Type: {type(vm_obj)}")
+                logger.debug(f"[ClusterState.annotate_vms] Processing VM: {vm_name_for_log}, Type: {type(vm_obj)}")
                 
                 if not hasattr(vm_obj, '_moId') or vm_obj._moId is None:
                     logger.warning(f"[ClusterState.annotate_vms] VM {vm_name_for_log} has missing or None _moId. Skipping its metric annotation.")
@@ -151,7 +151,7 @@ class ClusterState:
             host_name_for_log = "UnknownHostObject" # Default
             try:
                 host_name_for_log = getattr(host_obj, 'name', 'UnknownHostObject_NoNameAttr')
-                logger.info(f"[ClusterState.annotate_hosts] Processing host: {host_name_for_log}, Type: {type(host_obj)}")
+                logger.debug(f"[ClusterState.annotate_hosts] Processing host: {host_name_for_log}, Type: {type(host_obj)}")
 
                 if not hasattr(host_obj, '_moId') or host_obj._moId is None:
                     logger.warning(f"[ClusterState.annotate_hosts] Host {host_name_for_log} has missing or None _moId. Skipping its metric annotation.")

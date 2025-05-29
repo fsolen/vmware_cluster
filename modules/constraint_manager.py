@@ -124,47 +124,79 @@ class ConstraintManager:
             return None
 
         best_target_host_obj = None
-        lowest_target_host_group_vm_count = float('inf') 
-
+        
         current_host_group_counts = {host.name: 0 for host in active_hosts if hasattr(host, 'name')}
         for vm_in_group_iter_pre_calc in vms_in_group:
             h_iter_pre_calc = self.cluster_state.get_host_of_vm(vm_in_group_iter_pre_calc)
             if h_iter_pre_calc and hasattr(h_iter_pre_calc, 'name') and h_iter_pre_calc.name in current_host_group_counts:
                 current_host_group_counts[h_iter_pre_calc.name] += 1
-        
+
+        # Pass 1: Find hosts that achieve perfect balance
+        perfect_balance_candidates = []
         for target_host_obj in active_hosts:
             if not hasattr(target_host_obj, 'name'): continue
             target_host_name = target_host_obj.name
             if target_host_name == source_host_name:
-                continue 
+                continue
 
             simulated_host_vm_counts = current_host_group_counts.copy()
-            simulated_host_vm_counts[source_host_name] = simulated_host_vm_counts.get(source_host_name, 1) -1 # handle if source_host_name was not in current_host_group_counts
+            simulated_host_vm_counts[source_host_name] = simulated_host_vm_counts.get(source_host_name, 1) - 1
             simulated_host_vm_counts[target_host_name] = simulated_host_vm_counts.get(target_host_name, 0) + 1
             
-            sim_counts_values = [simulated_host_vm_counts[h.name] for h in active_hosts if hasattr(h,'name') and h.name in simulated_host_vm_counts]
+            sim_counts_values = [simulated_host_vm_counts[h.name] for h in active_hosts if hasattr(h, 'name') and h.name in simulated_host_vm_counts]
             if not sim_counts_values: continue
 
             sim_min_count = min(sim_counts_values)
             sim_max_count = max(sim_counts_values)
 
             if sim_max_count - sim_min_count <= 1:
-                current_count_on_target_for_group = current_host_group_counts.get(target_host_name, 0)
-                if current_count_on_target_for_group < lowest_target_host_group_vm_count:
-                    lowest_target_host_group_vm_count = current_count_on_target_for_group
-                    best_target_host_obj = target_host_obj
-                elif current_count_on_target_for_group == lowest_target_host_group_vm_count:
-                    if best_target_host_obj and hasattr(best_target_host_obj, 'name') and target_host_obj.name < best_target_host_obj.name:
-                         best_target_host_obj = target_host_obj
-                    elif not best_target_host_obj: 
-                         best_target_host_obj = target_host_obj
+                perfect_balance_candidates.append(target_host_obj)
 
-        if best_target_host_obj:
-            logger.info(f"[ConstraintManager] Preferred host for VM '{vm_to_move.name}' is '{best_target_host_obj.name}'.")
-        else:
-            logger.warning(f"[ConstraintManager] No host found for VM '{vm_to_move.name}' that would result in a perfect anti-affinity balance (max_diff <= 1).")
-        return best_target_host_obj
+        if perfect_balance_candidates:
+            lowest_target_host_group_vm_count = float('inf')
+            for candidate_host_obj in perfect_balance_candidates:
+                candidate_host_name = candidate_host_obj.name # Assuming name attribute exists due to earlier checks
+                current_count_on_candidate = current_host_group_counts.get(candidate_host_name, 0)
+                if current_count_on_candidate < lowest_target_host_group_vm_count:
+                    lowest_target_host_group_vm_count = current_count_on_candidate
+                    best_target_host_obj = candidate_host_obj
+                elif current_count_on_candidate == lowest_target_host_group_vm_count:
+                    if best_target_host_obj and hasattr(best_target_host_obj, 'name') and candidate_host_obj.name < best_target_host_obj.name:
+                        best_target_host_obj = candidate_host_obj
+                    elif not best_target_host_obj: # Should only happen for the first candidate meeting the criteria
+                        best_target_host_obj = candidate_host_obj
+            logger.info(f"[ConstraintManager] Preferred host for VM '{vm_to_move.name}' (perfect balance) is '{best_target_host_obj.name}'.")
+            return best_target_host_obj
+
+        # Pass 2: If no perfect candidates, find host that minimally has fewer VMs of the group than source
+        logger.info(f"[ConstraintManager] No host achieves perfect AA balance for VM '{vm_to_move.name}'. Trying to find host with fewer group VMs than source.")
+        min_group_vms_on_target = float('inf')
+        source_host_group_count = current_host_group_counts.get(source_host_name, float('inf'))
+
+        for target_host_obj in active_hosts:
+            if not hasattr(target_host_obj, 'name'): continue
+            target_host_name = target_host_obj.name
+            if target_host_name == source_host_name:
+                continue
+            
+            current_count_on_target_for_group = current_host_group_counts.get(target_host_name, 0)
+
+            if current_count_on_target_for_group < source_host_group_count:
+                if current_count_on_target_for_group < min_group_vms_on_target:
+                    min_group_vms_on_target = current_count_on_target_for_group
+                    best_target_host_obj = target_host_obj
+                elif current_count_on_target_for_group == min_group_vms_on_target:
+                    if best_target_host_obj and hasattr(best_target_host_obj, 'name') and target_host_obj.name < best_target_host_obj.name:
+                        best_target_host_obj = target_host_obj
+                    elif not best_target_host_obj: # Should only happen for the first candidate in this pass
+                        best_target_host_obj = target_host_obj
         
+        if best_target_host_obj:
+            logger.info(f"[ConstraintManager] No host achieves perfect AA balance. Selecting host '{best_target_host_obj.name}' to reduce load from source for VM '{vm_to_move.name}'.")
+        else:
+            logger.warning(f"[ConstraintManager] No suitable host found for VM '{vm_to_move.name}' even with relaxed anti-affinity criteria.")
+        return best_target_host_obj
+
     def apply(self):
         '''
         Applies anti-affinity rules by first grouping VMs and then calculating violations.

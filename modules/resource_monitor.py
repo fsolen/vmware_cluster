@@ -35,7 +35,7 @@ class ResourceMonitor:
 
         # --- START DIAGNOSTIC CODE ---
         entity_name_for_log = getattr(entity, 'name', str(entity)) # Get name if available, else string form
-        logger.info(f"[_get_performance_data] Processing entity: {entity_name_for_log}, Type: {type(entity)}, For Metric: {metric_name}")
+        logger.debug(f"[_get_performance_data] Processing entity: {entity_name_for_log}, Type: {type(entity)}, For Metric: {metric_name}")
 
         if isinstance(entity, str):
             logger.error(f"[_get_performance_data] CRITICAL: Entity for metric '{metric_name}' is a STRING: '{entity}'. This will cause _moId error.")
@@ -53,7 +53,7 @@ class ResourceMonitor:
             return 0 # Or None, consistent with other error returns
 
         # This log line should now only be reached if _moId exists and is not None
-        logger.info(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
+        logger.debug(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
         # --- END DIAGNOSTIC CODE ---
 
         if not metric_id:
@@ -61,24 +61,24 @@ class ResourceMonitor:
             return 0 # Return 0 to match behavior of other error paths in this func
 
         # --- START NEW DEEPER DIAGNOSTICS ---
-        logger.info(f"[_get_performance_data] About to call QueryPerf for entity '{entity_name_for_log}' (_moId: {entity._moId}).")
+        logger.debug(f"[_get_performance_data] About to call QueryPerf for entity '{entity_name_for_log}' (_moId: {entity._moId}).")
         
         si_type = type(self.service_instance)
-        logger.info(f"[_get_performance_data] Type of self.service_instance: {si_type}")
+        logger.debug(f"[_get_performance_data] Type of self.service_instance: {si_type}")
         if not hasattr(self.service_instance, '_moId'):
             logger.error("[_get_performance_data] CRITICAL: self.service_instance has no _moId!")
         else:
-            logger.info(f"[_get_performance_data] self.service_instance._moId: {self.service_instance._moId}")
+            logger.debug(f"[_get_performance_data] self.service_instance._moId: {self.service_instance._moId}")
 
         content_type = type(self.service_instance.content)
-        logger.info(f"[_get_performance_data] Type of self.service_instance.content: {content_type}")
+        logger.debug(f"[_get_performance_data] Type of self.service_instance.content: {content_type}")
 
         perf_manager_type = type(self.performance_manager)
-        logger.info(f"[_get_performance_data] Type of self.performance_manager: {perf_manager_type}")
+        logger.debug(f"[_get_performance_data] Type of self.performance_manager: {perf_manager_type}")
         if not hasattr(self.performance_manager, '_moId'):
             logger.error("[_get_performance_data] CRITICAL: self.performance_manager has no _moId!")
         else:
-            logger.info(f"[_get_performance_data] self.performance_manager._moId: {self.performance_manager._moId}")
+            logger.debug(f"[_get_performance_data] self.performance_manager._moId: {self.performance_manager._moId}")
         # --- END NEW DEEPER DIAGNOSTICS ---
 
         query_spec_list = [
@@ -92,7 +92,7 @@ class ResourceMonitor:
 
         try:
             # Log right before the call
-            logger.info(f"[_get_performance_data] Attempting QueryPerf for entity: {getattr(entity, 'name', str(entity))} (_moId: {getattr(entity, '_moId', 'N/A')})")
+            logger.debug(f"[_get_performance_data] Attempting QueryPerf for entity: {getattr(entity, 'name', str(entity))} (_moId: {getattr(entity, '_moId', 'N/A')})")
             query_results = self.performance_manager.QueryPerf(querySpec=query_spec_list)
             
             # Process query_results INSIDE the try block
@@ -111,7 +111,7 @@ class ResourceMonitor:
                 else:
                     logger.warning(f"No metric series list found for {metric_name} on {entity_name_for_log}.")
             else:
-                logger.info(f"No performance data returned for {metric_name} on {entity_name_for_log}. This might be normal.")
+                logger.debug(f"No performance data returned for {metric_name} on {entity_name_for_log}. This might be normal.")
             return 0 # Default if no data found or any other issue after successful query
 
         except AttributeError as ae: # Catch AttributeError specifically
@@ -180,50 +180,52 @@ class ResourceMonitor:
                 host_metrics[metric_key] = scalar_metric_value
 
         # Add capacity information
-        host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
-        host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
-        
-        # Disk I/O capacity is an estimated value. For consistent balancing based on percentages,
-        # this value should be the same for all hosts, or derived using a consistent methodology if dynamic.
-        # Current balancing logic (max % - min %) is effective for relative load comparison
-        # as long as the capacity figure, even if an estimate, is applied uniformly.
-        host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s (estimated)
-        
-        # Network capacity is derived from the sum of speeds of all physical NICs (pNICs).
-        # This provides a more dynamic and host-specific capacity compared to a fixed estimate.
-        # If pNIC info is unavailable, a default estimate (10Gbps = 1250.0 MB/s) is used.
-        network_capacity_val = 1250.0 # Default value as float
-        if (host.config and hasattr(host.config, 'network') and 
-            host.config.network and hasattr(host.config.network, 'pnic') and 
-            host.config.network.pnic):
-            pnics = host.config.network.pnic
-            try:
-                valid_link_speeds = []
-                for pnic_obj in pnics: # Renamed p to pnic_obj for clarity
-                    if hasattr(pnic_obj, 'linkSpeed') and \
-                       pnic_obj.linkSpeed is not None and \
-                       hasattr(pnic_obj.linkSpeed, 'speedMb') and \
-                       isinstance(pnic_obj.linkSpeed.speedMb, int): # Check type
-                        valid_link_speeds.append(pnic_obj.linkSpeed.speedMb)
-                    elif hasattr(pnic_obj, 'linkSpeed') and pnic_obj.linkSpeed is not None and hasattr(pnic_obj.linkSpeed, 'speedMb'):
-                        # Log if speedMb exists but is not an int (and not None, covered by isinstance)
-                        logger.warning(f"Host '{host.name}', pNIC '{pnic_obj.device}': linkSpeed.speedMb found but is not an integer (type: {type(pnic_obj.linkSpeed.speedMb)} value: {pnic_obj.linkSpeed.speedMb}). Skipping this pNIC for network capacity sum.")
+        try:
+            host_metrics["cpu_capacity"] = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
+            host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
+            
+            # Disk I/O capacity is an estimated value.
+            host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s (estimated)
+            
+            # Network capacity calculation
+            network_capacity_val = 1250.0 # Default value as float
+            if (host.config and hasattr(host.config, 'network') and 
+                host.config.network and hasattr(host.config.network, 'pnic') and 
+                host.config.network.pnic):
+                pnics = host.config.network.pnic
+                # This inner try-except is for pNIC processing specifically.
+                # An error here will use default network_capacity_val and log a warning, then continue.
+                try:
+                    valid_link_speeds = []
+                    for pnic_obj in pnics: 
+                        if hasattr(pnic_obj, 'linkSpeed') and \
+                           pnic_obj.linkSpeed is not None and \
+                           hasattr(pnic_obj.linkSpeed, 'speedMb') and \
+                           isinstance(pnic_obj.linkSpeed.speedMb, int):
+                            valid_link_speeds.append(pnic_obj.linkSpeed.speedMb)
+                        elif hasattr(pnic_obj, 'linkSpeed') and pnic_obj.linkSpeed is not None and hasattr(pnic_obj.linkSpeed, 'speedMb'):
+                            logger.warning(f"Host '{host.name}', pNIC '{pnic_obj.device}': linkSpeed.speedMb found but is not an integer (type: {type(pnic_obj.linkSpeed.speedMb)} value: {pnic_obj.linkSpeed.speedMb}). Skipping this pNIC for network capacity sum.")
 
-                if valid_link_speeds:
-                    total_link_speed_mbps = sum(valid_link_speeds) 
-                    network_capacity_val = total_link_speed_mbps / 8.0 
-                    if network_capacity_val == 0: # If sum was 0 (e.g. all valid speeds were 0)
-                        logger.warning(f"Host '{host.name}': Sum of valid pNIC link speeds is 0. Defaulting network capacity.")
-                        network_capacity_val = 1250.0
-                else:
-                    logger.warning(f"Host '{host.name}': No valid integer link speeds (speedMb) found for pNICs. Defaulting network capacity.")
-                    # network_capacity_val remains 1250.0 (default set at start)
-            except Exception as e:
-                logger.warning(f"Host '{host.name}': Error calculating network capacity from pNICs: {e}. Defaulting.")
-                # network_capacity_val remains 1250.0 (default set at start)
-        else:
-            logger.warning(f"Host '{host.name}': Could not retrieve pNIC information. Defaulting network capacity.")
-            # network_capacity_val remains 1250.0 (default set at start)
-        host_metrics["network_capacity"] = network_capacity_val
+                    if valid_link_speeds:
+                        total_link_speed_mbps = sum(valid_link_speeds) 
+                        network_capacity_val = total_link_speed_mbps / 8.0 
+                        if network_capacity_val == 0: 
+                            logger.warning(f"Host '{host.name}': Sum of valid pNIC link speeds is 0. Defaulting network capacity.")
+                            network_capacity_val = 1250.0
+                    else:
+                        logger.warning(f"Host '{host.name}': No valid integer link speeds (speedMb) found for pNICs. Defaulting network capacity.")
+                except Exception as e_pnic: # Catch errors during pNIC processing
+                    logger.warning(f"Host '{host.name}': Error calculating network capacity from pNICs: {e_pnic}. Defaulting network capacity.")
+                    # network_capacity_val remains 1250.0 (default set at start of network calc block)
+            else:
+                logger.warning(f"Host '{host.name}': Could not retrieve pNIC information. Defaulting network capacity.")
+            host_metrics["network_capacity"] = network_capacity_val
 
+        except Exception as e:
+            logger.error(f"[ResourceMonitor.get_host_metrics] Error fetching capacity for host '{getattr(host, 'name', str(host))}': {e}. Capacities will be defaulted.")
+            host_metrics["cpu_capacity"] = 0
+            host_metrics["memory_capacity"] = 0
+            host_metrics["disk_io_capacity"] = 1 # Use 1 to prevent potential division by zero
+            host_metrics["network_capacity"] = 1 # Use 1 to prevent potential division by zero
+            
         return host_metrics

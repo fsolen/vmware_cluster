@@ -218,6 +218,64 @@ class TestClusterState(unittest.TestCase):
             "[ClusterState.get_host_by_name] Host 'some_name_for_no_name_host' not found in self.hosts."
         )
 
+    @patch('modules.cluster_state.logger')
+    def test_log_cluster_stats_with_defaulted_capacities(self, mock_cs_logger):
+        # Setup host_metrics with defaulted capacities
+        self.cluster_state.host_metrics = {
+            "host1.example.com": {
+                'cpu_usage': 1000, 'memory_usage': 2048, 'disk_io_usage': 50, 'network_io_usage': 20, # Some usage
+                'cpu_capacity': 0, 'memory_capacity': 0, 'disk_io_capacity': 1, 'network_capacity': 1, # Defaulted capacities
+                'cpu_usage_pct': 0, 'memory_usage_pct': 0, # Percentages will be 0 due to 0 capacity
+                'vms': ["vm1", "vm2"]
+            }
+        }
+        # Setup vm_metrics (can be empty or with some data, does not affect this specific test focus)
+        self.cluster_state.vm_metrics = {
+            "vm1": {"vm_obj": MagicMock(name="vm1"), "cpu_usage_abs": 500, "memory_usage_abs": 1024, "disk_io_usage_abs": 20, "network_io_usage_abs": 10},
+            "vm2": {"vm_obj": MagicMock(name="vm2"), "cpu_usage_abs": 500, "memory_usage_abs": 1024, "disk_io_usage_abs": 30, "network_io_usage_abs": 10}
+        }
+        
+        # Mock get_host_of_vm for VM logging part (if vm_metrics is not empty)
+        mock_vm1_host = MagicMock(spec=vim.HostSystem)
+        mock_vm1_host.name = "host1.example.com"
+        self.cluster_state.get_host_of_vm = MagicMock(return_value=mock_vm1_host)
+
+
+        # Action
+        self.cluster_state.log_cluster_stats()
+
+        # Assertions
+        # Check that host-level stats are logged
+        mock_cs_logger.info.assert_any_call("\n--- Host Resource Distribution ---")
+        mock_cs_logger.info.assert_any_call("\nHost: host1.example.com")
+        
+        # Check CPU line: Since capacity is 0, usage % should be 0
+        # Format: f"├─ CPU: {metrics['cpu_usage_pct']:.1f}% ({metrics['cpu_usage']}/{metrics['cpu_capacity']} MHz)"
+        mock_cs_logger.info.assert_any_call("├─ CPU: 0.0% (1000/0 MHz)")
+        
+        # Check Memory line: Since capacity is 0, usage % should be 0
+        # Format: f"├─ Memory: {metrics['memory_usage_pct']:.1f}% ({metrics['memory_usage']}/{metrics['memory_capacity']} MB)"
+        mock_cs_logger.info.assert_any_call("├─ Memory: 0.0% (2048/0 MB)")
+
+        # Check Disk I/O line: Capacity is 1
+        # Format: f"├─ Disk I/O: {metrics['disk_io_usage']:.1f} MBps" 
+        # Note: The log does not show disk capacity directly in this line, but it's used for pct calc elsewhere if implemented.
+        # Here we just check the usage is logged.
+        mock_cs_logger.info.assert_any_call("├─ Disk I/O: 50.0 MBps")
+
+        # Check Network I/O line: Capacity is 1
+        # Format: f"├─ Network I/O: {metrics['network_io_usage']:.1f} MBps"
+        mock_cs_logger.info.assert_any_call("├─ Network I/O: 20.0 MBps")
+        
+        mock_cs_logger.info.assert_any_call("└─ VMs: 2 (vm1, vm2)")
+
+        # Check overall cluster totals (capacities will be 0 or 1, affecting percentages)
+        mock_cs_logger.info.assert_any_call("\n=== Cluster Total Resource Usage ===")
+        mock_cs_logger.info.assert_any_call("CPU: 0.0% (1000/0 MHz)") # Total capacity is 0
+        mock_cs_logger.info.assert_any_call("Memory: 0.0% (2048/0 MB)") # Total capacity is 0
+        mock_cs_logger.info.assert_any_call("Total Disk I/O: 50.0 MBps")
+        mock_cs_logger.info.assert_any_call("Total Network I/O: 20.0 MBps")
+
 
 if __name__ == '__main__':
     unittest.main()
