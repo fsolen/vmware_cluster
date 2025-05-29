@@ -48,6 +48,11 @@ class ResourceMonitor:
             # Returning a default
             return 0 # Or None
         
+        if entity._moId is None: # Check if _moId attribute exists but is None
+            logger.error(f"[_get_performance_data] CRITICAL: Entity '{entity_name_for_log}' of type {type(entity)} has _moId value of None. Metric: {metric_name}")
+            return 0 # Or None, consistent with other error returns
+
+        # This log line should now only be reached if _moId exists and is not None
         logger.info(f"[_get_performance_data] Entity '{entity_name_for_log}' appears to be a valid managed object with _moId: {entity._moId}")
         # --- END DIAGNOSTIC CODE ---
 
