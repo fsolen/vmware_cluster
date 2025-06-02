@@ -188,12 +188,12 @@ class ClusterState:
                 self.host_metrics[host_obj.name] = current_host_metrics
                 
                 # Logging can be verbose, ensure it's needed or adjust level/content (already debug)
-                logger.debug(f"Host {host_obj.name} annotated metrics:")
-                logger.debug(f"  CPU: {current_host_metrics['cpu_usage_pct']:.1f}% ({current_host_metrics['cpu_usage']}/{current_host_metrics['cpu_capacity']} MHz)")
-                logger.debug(f"  Memory: {current_host_metrics['memory_usage_pct']:.1f}% ({current_host_metrics['memory_usage']}/{current_host_metrics['memory_capacity']} MB)")
-                logger.debug(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
-                logger.debug(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
-                logger.debug(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
+                logger.info(f"Host {host_obj.name} annotated metrics:")
+                logger.info(f"  CPU: {current_host_metrics['cpu_usage_pct']:.1f}% ({current_host_metrics['cpu_usage']}/{current_host_metrics['cpu_capacity']} MHz)")
+                logger.info(f"  Memory: {current_host_metrics['memory_usage_pct']:.1f}% ({current_host_metrics['memory_usage']}/{current_host_metrics['memory_capacity']} MB)")
+                logger.info(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
+                logger.info(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
+                logger.info(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
 
             except AttributeError as ae:
                 logger.error(f"[ClusterState.annotate_hosts] AttributeError while processing host '{host_name_for_log}' (Type: {type(host_obj)}): {ae}")
