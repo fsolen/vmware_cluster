@@ -185,7 +185,7 @@ class ResourceMonitor:
             host_metrics["memory_capacity"] = host.summary.hardware.memorySize / (1024 * 1024)  # Convert B to MB
             
             # Disk I/O capacity is an estimated value.
-            host_metrics["disk_io_capacity"] = 1000  # Example: 1000 MB/s (estimated)
+            host_metrics["disk_io_capacity"] = 4000  # for 32 Gbit SAN
             
             # Network capacity calculation
             network_capacity_val = 1250.0 # Default value as float
