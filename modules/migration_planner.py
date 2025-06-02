@@ -11,8 +11,8 @@ class MigrationManager:
         # logger setup will use the global logger from fdrs.py, or a module-level logger
         # self.logger = logger # No need for self.logger if using module-level logger
 
-    def _is_anti_affinity_safe(self, vm_to_move, target_host_obj):
-        logger.debug(f"[MigrationPlanner] Checking anti-affinity safety for VM '{vm_to_move.name}' to host '{target_host_obj.name}'.")
+    def _is_anti_affinity_safe(self, vm_to_move, target_host_obj, planned_migrations_in_cycle=None):
+        logger.debug(f"[MigrationPlanner] Checking anti-affinity safety for VM '{vm_to_move.name}' to host '{target_host_obj.name}'. Planned migrations in cycle: {planned_migrations_in_cycle}")
         vm_prefix = vm_to_move.name[:-2]
         
         # Ensure vm_distribution is populated. It should be after constraint_manager.apply()
@@ -38,22 +38,31 @@ class MigrationManager:
 
         simulated_host_vm_counts = {host.name: 0 for host in all_active_hosts if hasattr(host, 'name')}
 
+        planned_vm_locations = {}
+        if planned_migrations_in_cycle:
+            for plan in planned_migrations_in_cycle:
+                if hasattr(plan['vm'], 'name') and hasattr(plan['target_host'], 'name'):
+                    planned_vm_locations[plan['vm'].name] = plan['target_host'].name
+
         for vm_in_group_iter in vms_in_group:
-            if not hasattr(vm_in_group_iter, 'name'): 
+            if not hasattr(vm_in_group_iter, 'name'):
                 logger.warning(f"[MigrationPlanner_AA_Check] VM in group {vm_prefix} is missing a name. Skipping.")
                 continue
 
-            current_host_of_iter_vm = self.cluster_state.get_host_of_vm(vm_in_group_iter)
-            
-            if vm_in_group_iter.name == vm_to_move.name:
-                # This VM is hypothetically moved to target_host_obj
-                if target_host_obj.name in simulated_host_vm_counts:
-                    simulated_host_vm_counts[target_host_obj.name] += 1
-                # If target_host_obj.name is not in simulated_host_vm_counts, it's an inactive/invalid host
-                # This case should ideally be filtered out before calling _is_anti_affinity_safe
+            current_vm_name = vm_in_group_iter.name
+            final_host_name_for_iter_vm = None
+
+            if current_vm_name == vm_to_move.name:
+                final_host_name_for_iter_vm = target_host_obj.name
+            elif current_vm_name in planned_vm_locations:
+                final_host_name_for_iter_vm = planned_vm_locations[current_vm_name]
             else:
-                if current_host_of_iter_vm and hasattr(current_host_of_iter_vm, 'name') and current_host_of_iter_vm.name in simulated_host_vm_counts:
-                    simulated_host_vm_counts[current_host_of_iter_vm.name] += 1
+                host_obj = self.cluster_state.get_host_of_vm(vm_in_group_iter)
+                if host_obj and hasattr(host_obj, 'name'):
+                    final_host_name_for_iter_vm = host_obj.name
+
+            if final_host_name_for_iter_vm and final_host_name_for_iter_vm in simulated_host_vm_counts:
+                simulated_host_vm_counts[final_host_name_for_iter_vm] += 1
         
         counts = [count for host_name, count in simulated_host_vm_counts.items() if self.cluster_state.get_host_by_name(host_name)] # Only count active hosts
         
@@ -172,7 +181,7 @@ class MigrationManager:
             if not self._would_fit_on_host(vm_to_move, target_host_obj):
                 continue
 
-            if not self._is_anti_affinity_safe(vm_to_move, target_host_obj):
+            if not self._is_anti_affinity_safe(vm_to_move, target_host_obj): # This call needs to be updated if it's within a cycle
                 continue
 
             # Score based on how much it improves balance for imbalanced resources
@@ -350,8 +359,15 @@ class MigrationManager:
                              logger.debug(f"No active imbalance details to guide host finding for {vm_to_move.name}. Skipping.")
                              continue
 
-
-                        target_host_obj = self._find_better_host_for_balancing(vm_to_move, source_host_obj, all_hosts_objects, active_imbalance_details_for_host_finding, host_resource_percentages)
+                        # Pass the current list of migrations to _find_better_host_for_balancing
+                        target_host_obj = self._find_better_host_for_balancing(
+                            vm_to_move,
+                            source_host_obj,
+                            all_hosts_objects,
+                            active_imbalance_details_for_host_finding,
+                            host_resource_percentages,
+                            planned_migrations_in_cycle=migrations  # Pass the 'migrations' list here
+                        )
                         
                         if target_host_obj:
                             migrations.append({'vm': vm_to_move, 'target_host': target_host_obj, 'reason': f"Resource Balancing ({', '.join(move_reason_details)})"})
@@ -444,7 +460,7 @@ def get_resource_percentage_lists_for_host_placeholder(load_evaluator_instance, 
 
 # Re-defining _find_better_host_for_balancing to accept target_metrics_pct to avoid dependency on un-added LoadEvaluator method
 MigrationManager._find_better_host_for_balancing_orig = MigrationManager._find_better_host_for_balancing
-def _find_better_host_for_balancing_revised(self, vm_to_move, source_host_obj, all_hosts, imbalanced_resources_details, host_resource_percentages_map):
+def _find_better_host_for_balancing_revised(self, vm_to_move, source_host_obj, all_hosts, imbalanced_resources_details, host_resource_percentages_map, planned_migrations_in_cycle=None):
     logger.debug(f"[MigrationPlanner] Finding better host for VM '{vm_to_move.name}' from '{source_host_obj.name}' for balancing (revised).")
     potential_targets = []
 
@@ -455,7 +471,8 @@ def _find_better_host_for_balancing_revised(self, vm_to_move, source_host_obj, a
         if not self._would_fit_on_host(vm_to_move, target_host_obj):
             continue
 
-        if not self._is_anti_affinity_safe(vm_to_move, target_host_obj):
+        # Pass planned_migrations_in_cycle to the anti-affinity check
+        if not self._is_anti_affinity_safe(vm_to_move, target_host_obj, planned_migrations_in_cycle=planned_migrations_in_cycle):
             continue
 
         score = 0
