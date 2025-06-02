@@ -42,12 +42,12 @@ def main():
 
     # Configure standard Python logging
     logging.basicConfig(
-        level=logging.info, # Set to DEBUG to capture all levels from modules
+        level=logging.DEBUG, # Set to DEBUG to capture all levels from modules
         format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[logging.StreamHandler(sys.stdout)] # Ensure output to console
     )
-    logging.getLogger('fdrs').setLevel(logging.DEBUG)
+    logging.getLogger('fdrs').setLevel(logging.INFO)
     # The module-level logger 'logger' will now use this basicConfig.
 
     logger.info("Starting FDRS...")
