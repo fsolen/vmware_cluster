@@ -76,6 +76,43 @@ class TestMigrationPlanner(unittest.TestCase):
         }
         self.mock_load_evaluator.get_all_host_resource_percentages_map.return_value = self.initial_host_map
 
+    def test_max_total_migrations_initialization(self):
+        """Test the initialization of max_total_migrations in MigrationManager."""
+        # Scenario 1: max_total_migrations is None
+        planner_none = MigrationManager(
+            self.mock_cluster_state,
+            self.mock_constraint_mgr,
+            self.mock_load_evaluator,
+            max_total_migrations=None
+        )
+        self.assertEqual(planner_none.max_total_migrations, 20) # Internal default
+
+        # Scenario 2: max_total_migrations is a specific integer
+        planner_specific = MigrationManager(
+            self.mock_cluster_state,
+            self.mock_constraint_mgr,
+            self.mock_load_evaluator,
+            max_total_migrations=50
+        )
+        self.assertEqual(planner_specific.max_total_migrations, 50)
+
+        # Scenario 3: max_total_migrations argument is omitted (uses __init__ signature default)
+        planner_default_sig = MigrationManager(
+            self.mock_cluster_state,
+            self.mock_constraint_mgr,
+            self.mock_load_evaluator
+        )
+        self.assertEqual(planner_default_sig.max_total_migrations, 20) # Signature default
+
+        # Scenario 4: max_total_migrations is a string number (should be cast to int)
+        planner_string = MigrationManager(
+            self.mock_cluster_state,
+            self.mock_constraint_mgr,
+            self.mock_load_evaluator,
+            max_total_migrations="15"
+        )
+        self.assertEqual(planner_string.max_total_migrations, 15)
+
 
     def test_get_simulated_load_lists_after_migrations(self):
         """Test the simulation of migrations on load data."""

@@ -11,7 +11,11 @@ class MigrationManager:
         self.constraint_manager = constraint_manager
         self.load_evaluator = load_evaluator
         self.aggressiveness = aggressiveness
-        self.max_total_migrations = max_total_migrations # Store the new parameter
+        # Default to 20 if None is explicitly passed, otherwise use the provided value or the parameter default.
+        if max_total_migrations is None:
+            self.max_total_migrations = 20 # Internal default
+        else:
+            self.max_total_migrations = int(max_total_migrations) # Ensure it's an int
         # logger setup will use the global logger from fdrs.py, or a module-level logger
         # self.logger = logger # No need for self.logger if using module-level logger
 
