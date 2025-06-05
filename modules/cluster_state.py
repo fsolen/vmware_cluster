@@ -338,7 +338,6 @@ class ClusterState:
             logger.warning("ResourceMonitor not provided to update_metrics, creating a new instance. This is not recommended for production.")
             resource_monitor = ResourceMonitor(self.service_instance) 
 
-        logger.info("Updating cluster metrics...")
         self.annotate_vms_with_metrics(resource_monitor)
         self.annotate_hosts_with_metrics(resource_monitor)
-        self.log_cluster_stats()  # Log detailed cluster state after updating metrics
+        self.log_cluster_stats() 
