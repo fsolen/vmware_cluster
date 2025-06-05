@@ -1,6 +1,6 @@
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fdrs')
 
 class LoadEvaluator:
     def __init__(self, hosts):
