@@ -10,7 +10,7 @@
 
 ---
 
-FDRS (Fully Dynamic Resource Scheduler) is a Python-based tool designed to automate and optimize resource management in VMware vSphere environments. It provides intelligent auto-balancing of cluster workloads and enforcement of VM anti-affinity rules to enhance performance and stability.
+FDRS (Fully Dynamic Resource Scheduler) is a Python-based tool designed to automate and optimize resource management in VMware (by Broadcom) vSphere environments. It provides intelligent auto-balancing of cluster workloads and enforcement of VM anti-affinity rules to enhance performance and stability.
 
 ### Features
 
