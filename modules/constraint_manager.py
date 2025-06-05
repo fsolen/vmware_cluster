@@ -100,7 +100,7 @@ class ConstraintManager:
         if not hasattr(vm_to_move, 'name') or len(vm_to_move.name) < 3:
             logger.warning(f"[ConstraintManager] Invalid vm_to_move object: {vm_to_move}")
             return None
-        vm_prefix = vm_to_move.name[:-2]
+        vm_prefix = vm_to_move.name.rstrip('0123456789') or vm_to_move.name
         
         if not self.vm_distribution: 
             logger.info("[ConstraintManager] vm_distribution is empty, populating it first.")
