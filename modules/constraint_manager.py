@@ -145,7 +145,7 @@ class ConstraintManager:
                 if not hasattr(planned_vm_obj, 'name'): continue # Should not happen with valid plans
 
                 # Check if the VM in the plan belongs to the current vm_prefix group
-                planned_vm_obj.name.rstrip('0123456789') or planned_vm_obj.name
+                planned_vm_prefix = planned_vm_obj.name.rstrip('0123456789') or planned_vm_obj.name
 
                 if planned_vm_prefix == vm_prefix: # Only adjust for the current VM's group
                     # Get the original host of the VM that's part of another plan in this cycle.
