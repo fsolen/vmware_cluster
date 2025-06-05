@@ -69,8 +69,23 @@ class LoadEvaluator:
         logger.debug(f"[LoadEvaluator] Aggressiveness: {aggressiveness}, Max Difference Thresholds: {thresholds}")
         return thresholds
 
-    def evaluate_imbalance(self, metrics_to_check=None, aggressiveness=3):
-        cpu_percentages, mem_percentages, disk_percentages, net_percentages = self.get_resource_percentage_lists()
+    def evaluate_imbalance(self, metrics_to_check=None, aggressiveness=3,
+                       cpu_percentages_override=None,
+                       mem_percentages_override=None,
+                       disk_percentages_override=None,
+                       net_percentages_override=None):
+        if cpu_percentages_override is not None and \
+           mem_percentages_override is not None and \
+           disk_percentages_override is not None and \
+           net_percentages_override is not None:
+            logger.debug("[LoadEvaluator] Using overridden resource percentage lists for imbalance evaluation.")
+            cpu_percentages = cpu_percentages_override
+            mem_percentages = mem_percentages_override
+            disk_percentages = disk_percentages_override
+            net_percentages = net_percentages_override
+        else:
+            logger.debug("[LoadEvaluator] Using internal resource percentage lists for imbalance evaluation.")
+            cpu_percentages, mem_percentages, disk_percentages, net_percentages = self.get_resource_percentage_lists()
         
         all_metrics_data = {
             'cpu': cpu_percentages,
@@ -134,8 +149,20 @@ class LoadEvaluator:
         # MigrationManager can iterate this and check 'is_imbalanced' for each.
         return imbalance_results
 
-    def is_balanced(self, metrics=None, aggressiveness=3):
-        imbalance_details = self.evaluate_imbalance(metrics_to_check=metrics, aggressiveness=aggressiveness)
+    def is_balanced(self, metrics=None, aggressiveness=3,
+                    cpu_percentages_override=None,
+                    mem_percentages_override=None,
+                    disk_percentages_override=None,
+                    net_percentages_override=None):
+        # Pass through the overrides to evaluate_imbalance
+        imbalance_details = self.evaluate_imbalance(
+            metrics_to_check=metrics,
+            aggressiveness=aggressiveness,
+            cpu_percentages_override=cpu_percentages_override,
+            mem_percentages_override=mem_percentages_override,
+            disk_percentages_override=disk_percentages_override,
+            net_percentages_override=net_percentages_override
+        )
         if not imbalance_details: # Empty dict if, for example, metrics_to_check was empty
             return True
         for resource_name, details in imbalance_details.items():
@@ -175,3 +202,58 @@ class LoadEvaluator:
             'network_io': [abs(usage - self.target_per_host['network_io']) for usage in net_io]
         }
         return cpu_usage, mem_usage, disk_io, net_io
+
+    def get_all_host_resource_percentages_map(self):
+        """
+        Calculates and returns a dictionary mapping host names to their resource usage percentages.
+        Example structure: {host_name: {'cpu': %, 'memory': %, 'disk': %, 'network': %}, ...}
+        """
+        logger.debug("[LoadEvaluator] Generating all host resource percentages map.")
+        cpu_p, mem_p, disk_p, net_p = self.get_resource_percentage_lists()
+
+        # Assuming self.hosts is a list of dicts, and each dict has a 'name' key.
+        # If host names are not available or structure is different, this part needs adjustment.
+        host_names = []
+        if isinstance(self.hosts, list):
+            for i, host_data in enumerate(self.hosts):
+                if isinstance(host_data, dict):
+                    name = host_data.get('name')
+                    if name:
+                        host_names.append(name)
+                    else:
+                        logger.warning(f"[LoadEvaluator] Host at index {i} is missing a 'name' key. Using placeholder name.")
+                        host_names.append(f"unknown_host_{i}")
+                else:
+                    logger.warning(f"[LoadEvaluator] Host data at index {i} is not a dict. Using placeholder name.")
+                    host_names.append(f"invalid_host_data_{i}")
+        else:
+            logger.error("[LoadEvaluator] self.hosts is not a list. Cannot generate host resource map.")
+            return {}
+
+        if not (len(cpu_p) == len(mem_p) == len(disk_p) == len(net_p) == len(host_names)):
+            logger.error(f"[LoadEvaluator] Mismatch in lengths of percentage lists and host names. "
+                         f"Hosts: {len(host_names)}, CPU: {len(cpu_p)}, MEM: {len(mem_p)}, "
+                         f"DISK: {len(disk_p)}, NET: {len(net_p)}. Returning partial/empty map.")
+            # Attempt to build map with available data, but this indicates an issue.
+            # Fallback to min length to avoid index errors, though data might be misaligned.
+            # A better approach might be to return {} or raise error.
+            # For now, proceed cautiously.
+            # This situation should not happen if get_resource_percentage_lists correctly pads for missing hosts.
+            # The current get_resource_percentage_lists appends 0.0 if host_data is not a dict, so lengths should match.
+
+        result_map = {}
+        for i, hn in enumerate(host_names):
+            # Check if index is valid for all lists, crucial if lengths mismatch
+            if i < len(cpu_p) and i < len(mem_p) and i < len(disk_p) and i < len(net_p):
+                result_map[hn] = {
+                    'cpu': cpu_p[i],
+                    'memory': mem_p[i],
+                    'disk': disk_p[i],
+                    'network': net_p[i],
+                }
+            else:
+                logger.warning(f"[LoadEvaluator] Data for host '{hn}' (index {i}) might be incomplete due to list length mismatch. Assigning empty metrics.")
+                result_map[hn] = {'cpu': 0, 'memory': 0, 'disk': 0, 'network': 0}
+
+        logger.debug(f"[LoadEvaluator] Generated host resource percentages map: {result_map}")
+        return result_map

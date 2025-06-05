@@ -1,215 +1,170 @@
-import logging
+import unittest
+from unittest.mock import MagicMock, patch
+from modules.constraint_manager import ConstraintManager
 
-logger = logging.getLogger('fdrs')
+# Basic Host and VM object structures for mocking
+class MockHost:
+    def __init__(self, name, vms=None):
+        self.name = name
+        self.vms = vms if vms else []
 
-class ConstraintManager:
-    def __init__(self, cluster_state):
-        self.cluster_state = cluster_state
-        self.vm_distribution = {}
-        self.violations = [] # Store identified violations
+class MockVM:
+    def __init__(self, name, host=None, config=None):
+        self.name = name
+        self.host = host
+        self.config = config or MagicMock() # Allow setting template attribute etc.
 
-    def enforce_anti_affinity(self):
-        # Docstring using single quotes to avoid issues
-        '''
-        Groups VMs by prefix (ignoring last 2 chars).
-        This populates self.vm_distribution.
-        '''
-        logger.info("[ConstraintManager] Grouping VMs by prefix for Anti-Affinity rules...")
-        self.vm_distribution = {}
-        all_vms = self.cluster_state.vms # Use direct attribute
+class TestConstraintManager(unittest.TestCase):
+    def setUp(self):
+        self.mock_cluster_state = MagicMock()
+        self.constraint_manager = ConstraintManager(self.mock_cluster_state)
 
-        if not all_vms:
-            logger.info("[ConstraintManager] No VMs found in cluster state.")
-            return
-
-        for vm in all_vms:
-            if not hasattr(vm, 'name') or len(vm.name) < 3: 
-                logger.warning(f"[ConstraintManager] VM with invalid name or missing name attribute skipped: {getattr(vm, 'name', 'UnknownVM')}")
-                continue
-            
-            name_part = vm.name.rstrip('0123456789')
-            if name_part: # Ensure rstrip didn't leave an empty string
-                short_name = name_part
-            else: 
-                short_name = vm.name # Use original name if rstrip results in empty (e.g. name is "123")
-
-            if short_name not in self.vm_distribution:
-                self.vm_distribution[short_name] = []
-            self.vm_distribution[short_name].append(vm)
-
-        logger.debug(f"[ConstraintManager] Grouped VMs by prefix: {{k: [vm.name for vm in vms] for k, vms in self.vm_distribution.items()}}")
-
-    def calculate_anti_affinity_violations(self):
-        # Escaped internal double quotes
-        """
-        Calculates VM anti-affinity violations based on the rule:
-        \"For VMs with the same prefix, the count of such VMs on any host
-         should not differ by more than 1 from the count on any other host.\"
-        Returns a list of VM objects that are on \"over-subscribed\" hosts for their group.
-        """
-        logger.info("[ConstraintManager] Calculating Anti-Affinity violations...")
-        all_violations = []
-        active_hosts = self.cluster_state.hosts # Use direct attribute
-
-        if not active_hosts or len(active_hosts) <= 1:
-            logger.info("[ConstraintManager] Not enough active hosts (<2) to apply anti-affinity distribution rules.")
-            return []
-
-        for prefix, vms_in_group in self.vm_distribution.items():
-            if not vms_in_group:
-                continue
-
-            host_vm_counts = {host.name: 0 for host in active_hosts if hasattr(host, 'name')}
-            vms_on_hosts_map = {host.name: [] for host in active_hosts if hasattr(host, 'name')}
-            
-            current_group_vms_on_hosts = 0
-            for vm in vms_in_group:
-                host = self.cluster_state.get_host_of_vm(vm) 
-                if host and hasattr(host, 'name') and host.name in host_vm_counts:
-                    host_vm_counts[host.name] += 1
-                    vms_on_hosts_map[host.name].append(vm)
-                    current_group_vms_on_hosts += 1
-            
-            if current_group_vms_on_hosts == 0:
-                logger.debug(f"[ConstraintManager] No VMs from group '{prefix}' are currently on the monitored hosts.")
-                continue
-
-            actual_counts_for_active_hosts = [host_vm_counts[h.name] for h in active_hosts if hasattr(h, 'name') and h.name in host_vm_counts]
-            if not actual_counts_for_active_hosts:
-                logger.debug(f"[ConstraintManager] No VMs from group '{prefix}' have count > 0 on any active host.")
-                continue
-
-            min_count = min(actual_counts_for_active_hosts)
-            max_count = max(actual_counts_for_active_hosts)
-
-            if max_count - min_count > 1:
-                logger.info(f"[ConstraintManager] Anti-Affinity violation for group '{prefix}'. Host counts for group: {host_vm_counts}")
-                for host_name, count in host_vm_counts.items():
-                    if count == max_count:
-                        logger.debug(f"[ConstraintManager] VMs on host '{host_name}' (count: {count}) from group '{prefix}' are contributing to violation.")
-                        all_violations.extend(vms_on_hosts_map[host_name])
+        # Sample hosts
+        self.host1 = MockHost(name="host1")
+        self.host2 = MockHost(name="host2")
+        self.host3 = MockHost(name="host3")
+        self.active_hosts = [self.host1, self.host2, self.host3]
+        self.mock_cluster_state.hosts = self.active_hosts
         
-        unique_violations = list(set(all_violations))
-        logger.info(f"[ConstraintManager] Total unique anti-affinity violations found: {len(unique_violations)}")
-        return unique_violations
+        # Sample VMs
+        self.vm1_g1 = MockVM(name="vmA01")
+        self.vm2_g1 = MockVM(name="vmA02")
+        self.vm3_g1 = MockVM(name="vmA03")
+        self.vm4_g2 = MockVM(name="vmB01")
 
-    def get_preferred_host_for_vm(self, vm_to_move):
-        '''
-        Suggests a preferred host for 'vm_to_move' to resolve an anti-affinity violation.
-        '''
-        logger.debug(f"[ConstraintManager] Getting preferred host for VM '{vm_to_move.name}'")
+
+    def test_find_perfect_balance_host_achievable(self):
+        """Test _find_perfect_balance_host when perfect balance is achievable."""
+        vm_to_move = self.vm1_g1 # From group 'vmA'
+        current_host_group_counts = {'host1': 2, 'host2': 0, 'host3': 0} # vm1_g1, vm2_g1 on host1
+        source_host_name = "host1"
         
-        if not hasattr(vm_to_move, 'name') or len(vm_to_move.name) < 3:
-            logger.warning(f"[ConstraintManager] Invalid vm_to_move object: {vm_to_move}")
-            return None
-        vm_prefix = vm_to_move.name[:-2]
+        # Expected: moving vm1_g1 to host2 (1,1,0) or host3 (1,0,1) achieves perfect balance.
+        # Host2 is lexicographically smaller than Host3 if counts are equal.
+        # If vm1_g1 moves to host2: host1=1, host2=1, host3=0. Max-Min = 1.
         
-        if not self.vm_distribution: 
-            logger.info("[ConstraintManager] vm_distribution is empty, populating it first.")
-            self.enforce_anti_affinity() 
-            if not self.vm_distribution:
-                 logger.warning(f"[ConstraintManager] vm_distribution still empty. Cannot determine preferred host for {vm_to_move.name}")
-                 return None
+        # Mock cluster state methods if necessary (not directly used by this helper, but good practice)
+        self.mock_cluster_state.get_host_of_vm.return_value = self.host1
 
-        vms_in_group = self.vm_distribution.get(vm_prefix)
-        if not vms_in_group:
-            logger.warning(f"[ConstraintManager] VM '{vm_to_move.name}' has no group in vm_distribution (prefix: {vm_prefix}). Distribution keys: {list(self.vm_distribution.keys())}")
-            return None
+        target_host = self.constraint_manager._find_perfect_balance_host(
+            vm_to_move, current_host_group_counts, source_host_name, self.active_hosts
+        )
+        self.assertIsNotNone(target_host)
+        self.assertEqual(target_host.name, "host2") # Prefers host2 due to lower current count (0)
 
-        source_host_obj = self.cluster_state.get_host_of_vm(vm_to_move)
-        if not source_host_obj or not hasattr(source_host_obj, 'name'):
-            logger.warning(f"[ConstraintManager] Cannot determine valid source host for VM '{vm_to_move.name}'.")
-            return None
-        source_host_name = source_host_obj.name
-
-        active_hosts = self.cluster_state.hosts # Use direct attribute
-        if not active_hosts or len(active_hosts) <= 1:
-            logger.info("[ConstraintManager] Not enough active hosts to find a preferred host.")
-            return None
-
-        best_target_host_obj = None
+    def test_find_perfect_balance_host_not_achievable(self):
+        """Test _find_perfect_balance_host when no host achieves perfect balance."""
+        vm_to_move = self.vm1_g1
+        # Scenario: Host1 has 3 VMs (vm1, vm2, vm3), Host2 has 0, Host3 has 0. Vm group size = 3
+        # Moving one VM from Host1 (now 2) to Host2 (now 1) -> counts (2,1,0). Max-Min = 2. Not perfect.
+        current_host_group_counts = {'host1': 3, 'host2': 0, 'host3': 0}
+        source_host_name = "host1"
         
-        current_host_group_counts = {host.name: 0 for host in active_hosts if hasattr(host, 'name')}
-        for vm_in_group_iter_pre_calc in vms_in_group:
-            h_iter_pre_calc = self.cluster_state.get_host_of_vm(vm_in_group_iter_pre_calc)
-            if h_iter_pre_calc and hasattr(h_iter_pre_calc, 'name') and h_iter_pre_calc.name in current_host_group_counts:
-                current_host_group_counts[h_iter_pre_calc.name] += 1
+        target_host = self.constraint_manager._find_perfect_balance_host(
+            vm_to_move, current_host_group_counts, source_host_name, self.active_hosts
+        )
+        self.assertIsNone(target_host)
 
-        # Pass 1: Find hosts that achieve perfect balance
-        perfect_balance_candidates = []
-        for target_host_obj in active_hosts:
-            if not hasattr(target_host_obj, 'name'): continue
-            target_host_name = target_host_obj.name
-            if target_host_name == source_host_name:
-                continue
+    def test_find_perfect_balance_multiple_candidates_tie_breaking(self):
+        """Test _find_perfect_balance_host with multiple candidates and tie-breaking."""
+        vm_to_move = self.vm1_g1
+        # Host1 has 2 (vm1, vm2), Host2 has 0, Host3 has 0. Vm group size = 2
+        # Moving vm1 from host1 (now 1) to host2 (now 1) -> (1,1,0) - perfect.
+        # Moving vm1 from host1 (now 1) to host3 (now 1) -> (1,0,1) - perfect.
+        # Both host2 and host3 currently have 0 VMs of the group.
+        # Tie-breaking: host with lexicographically smaller name (host2).
+        current_host_group_counts = {'host1': 2, 'host2': 0, 'host3': 0}
+        source_host_name = "host1"
 
-            simulated_host_vm_counts = current_host_group_counts.copy()
-            simulated_host_vm_counts[source_host_name] = simulated_host_vm_counts.get(source_host_name, 1) - 1
-            simulated_host_vm_counts[target_host_name] = simulated_host_vm_counts.get(target_host_name, 0) + 1
-            
-            sim_counts_values = [simulated_host_vm_counts[h.name] for h in active_hosts if hasattr(h, 'name') and h.name in simulated_host_vm_counts]
-            if not sim_counts_values: continue
+        target_host = self.constraint_manager._find_perfect_balance_host(
+            vm_to_move, current_host_group_counts, source_host_name, self.active_hosts
+        )
+        self.assertIsNotNone(target_host)
+        self.assertEqual(target_host.name, "host2")
 
-            sim_min_count = min(sim_counts_values)
-            sim_max_count = max(sim_counts_values)
 
-            if sim_max_count - sim_min_count <= 1:
-                perfect_balance_candidates.append(target_host_obj)
+    def test_find_better_than_source_host_exists(self):
+        """Test _find_better_than_source_host when a better host exists."""
+        vm_to_move = self.vm1_g1
+        current_host_group_counts = {'host1': 3, 'host2': 1, 'host3': 0} # Source host1 has 3.
+        source_host_name = "host1"
+        source_host_group_count = 3
 
-        if perfect_balance_candidates:
-            lowest_target_host_group_vm_count = float('inf')
-            for candidate_host_obj in perfect_balance_candidates:
-                candidate_host_name = candidate_host_obj.name # Assuming name attribute exists due to earlier checks
-                current_count_on_candidate = current_host_group_counts.get(candidate_host_name, 0)
-                if current_count_on_candidate < lowest_target_host_group_vm_count:
-                    lowest_target_host_group_vm_count = current_count_on_candidate
-                    best_target_host_obj = candidate_host_obj
-                elif current_count_on_candidate == lowest_target_host_group_vm_count:
-                    if best_target_host_obj and hasattr(best_target_host_obj, 'name') and candidate_host_obj.name < best_target_host_obj.name:
-                        best_target_host_obj = candidate_host_obj
-                    elif not best_target_host_obj: # Should only happen for the first candidate meeting the criteria
-                        best_target_host_obj = candidate_host_obj
-            logger.info(f"[ConstraintManager] Preferred host for VM '{vm_to_move.name}' (perfect balance) is '{best_target_host_obj.name}'.")
-            return best_target_host_obj
+        # host2 (1) and host3 (0) are better than source_host_group_count (3).
+        # host3 is the best as it has the minimum (0).
+        target_host = self.constraint_manager._find_better_than_source_host(
+            vm_to_move, current_host_group_counts, source_host_name, source_host_group_count, self.active_hosts
+        )
+        self.assertIsNotNone(target_host)
+        self.assertEqual(target_host.name, "host3")
 
-        # Pass 2: If no perfect candidates, find host that minimally has fewer VMs of the group than source
-        logger.info(f"[ConstraintManager] No host achieves perfect AA balance for VM '{vm_to_move.name}'. Trying to find host with fewer group VMs than source.")
-        min_group_vms_on_target = float('inf')
-        source_host_group_count = current_host_group_counts.get(source_host_name, float('inf'))
-
-        for target_host_obj in active_hosts:
-            if not hasattr(target_host_obj, 'name'): continue
-            target_host_name = target_host_obj.name
-            if target_host_name == source_host_name:
-                continue
-            
-            current_count_on_target_for_group = current_host_group_counts.get(target_host_name, 0)
-
-            if current_count_on_target_for_group < source_host_group_count:
-                if current_count_on_target_for_group < min_group_vms_on_target:
-                    min_group_vms_on_target = current_count_on_target_for_group
-                    best_target_host_obj = target_host_obj
-                elif current_count_on_target_for_group == min_group_vms_on_target:
-                    if best_target_host_obj and hasattr(best_target_host_obj, 'name') and target_host_obj.name < best_target_host_obj.name:
-                        best_target_host_obj = target_host_obj
-                    elif not best_target_host_obj: # Should only happen for the first candidate in this pass
-                        best_target_host_obj = target_host_obj
+    def test_find_better_than_source_host_none_better(self):
+        """Test _find_better_than_source_host when no host is better than the source."""
+        vm_to_move = self.vm1_g1
+        current_host_group_counts = {'host1': 1, 'host2': 2, 'host3': 2} # Source host1 has 1.
+        source_host_name = "host1"
+        source_host_group_count = 1
         
-        if best_target_host_obj:
-            logger.info(f"[ConstraintManager] No host achieves perfect AA balance. Selecting host '{best_target_host_obj.name}' to reduce load from source for VM '{vm_to_move.name}'.")
-        else:
-            logger.warning(f"[ConstraintManager] No suitable host found for VM '{vm_to_move.name}' even with relaxed anti-affinity criteria.")
-        return best_target_host_obj
+        target_host = self.constraint_manager._find_better_than_source_host(
+            vm_to_move, current_host_group_counts, source_host_name, source_host_group_count, self.active_hosts
+        )
+        self.assertIsNone(target_host)
 
-    def apply(self):
-        '''
-        Applies anti-affinity rules by first grouping VMs and then calculating violations.
-        Violations are stored in self.violations.
-        '''
-        self.enforce_anti_affinity() 
-        self.violations = self.calculate_anti_affinity_violations()
+    def test_find_better_than_source_multiple_better_tie_breaking(self):
+        """Test _find_better_than_source_host with multiple better hosts and tie-breaking."""
+        vm_to_move = self.vm1_g1
+        # Source host1 has 3. Host2 has 1, Host3 has 1. Both are better.
+        # Tie-breaking by name: host2.
+        current_host_group_counts = {'host1': 3, 'host2': 1, 'host3': 1}
+        source_host_name = "host1"
+        source_host_group_count = 3
 
-        if self.violations:
-            logger.info(f"[ConstraintManager] Apply: Found {len(self.violations)} unique Anti-Affinity violations.")
-        else:
-            logger.info("[ConstraintManager] Apply: No Anti-Affinity violations detected.")
+        target_host = self.constraint_manager._find_better_than_source_host(
+            vm_to_move, current_host_group_counts, source_host_name, source_host_group_count, self.active_hosts
+        )
+        self.assertIsNotNone(target_host)
+        self.assertEqual(target_host.name, "host2")
+
+    @patch('modules.constraint_manager.ConstraintManager._find_better_than_source_host')
+    @patch('modules.constraint_manager.ConstraintManager._find_perfect_balance_host')
+    def test_get_preferred_host_for_vm_orchestration(self, mock_find_perfect, mock_find_better):
+        """Test get_preferred_host_for_vm orchestration of helper calls."""
+        vm_to_move = self.vm1_g1
+        vm_to_move.name = "vmA01" # Ensure name is set for prefix logic
+
+        # Setup for vm_distribution population
+        self.mock_cluster_state.vms = [self.vm1_g1, self.vm2_g1]
+        self.mock_cluster_state.get_host_of_vm.side_effect = lambda vm: {
+            self.vm1_g1: self.host1, self.vm2_g1: self.host1
+        }.get(vm)
+
+        # Scenario 1: Perfect balance host found
+        mock_find_perfect.return_value = self.host2
+        result_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move)
+        mock_find_perfect.assert_called_once()
+        mock_find_better.assert_not_called()
+        self.assertEqual(result_host, self.host2)
+
+        # Reset mocks for Scenario 2
+        mock_find_perfect.reset_mock()
+        mock_find_better.reset_mock()
+        mock_find_perfect.return_value = None # No perfect balance host
+        mock_find_better.return_value = self.host3 # Better host found by second helper
+
+        result_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move)
+        mock_find_perfect.assert_called_once()
+        mock_find_better.assert_called_once()
+        self.assertEqual(result_host, self.host3)
+
+    def test_get_preferred_host_for_vm_initial_checks_vm_invalid(self):
+        invalid_vm = MockVM(name="v") # Name too short
+        self.assertIsNone(self.constraint_manager.get_preferred_host_for_vm(invalid_vm))
+
+        # VM with no name attribute (more tricky to mock with simple class)
+        # For now, assume hasattr check handles it.
+        # vm_no_name = object() # Lacks 'name'
+        # self.assertIsNone(self.constraint_manager.get_preferred_host_for_vm(vm_no_name))
+
+
+if __name__ == '__main__':
+    unittest.main()
