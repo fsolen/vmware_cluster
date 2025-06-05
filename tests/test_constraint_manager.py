@@ -405,6 +405,104 @@ class TestConstraintManager(unittest.TestCase):
         self.assertEqual(preferred_host.name, target_host_c.name,
                          "Preferred host should be hostC for perfect balance based on 'vm' group.")
 
+    @patch('modules.constraint_manager.ConstraintManager._find_better_than_source_host')
+    @patch('modules.constraint_manager.ConstraintManager._find_perfect_balance_host')
+    def test_get_preferred_host_for_vm_planned_migration_affinity_grouping(self, mock_find_perfect, mock_find_better):
+        """
+        Tests that planned migrations correctly use rstrip for prefix calculation
+        and influence the adjusted_host_group_counts.
+        """
+        vm_to_move = MockVM(name="appVM101") # Prefix "appVM"
+        planned_vm = MockVM(name="appVM01")  # Prefix "appVM"
+        other_vm_in_group = MockVM(name="appVM02") # Prefix "appVM"
+
+        hostA = MockHost(name="hostA") # Source for vm_to_move
+        hostB = MockHost(name="hostB") # Potential target for vm_to_move
+        hostC = MockHost(name="hostC") # Original host of planned_vm
+        hostD = MockHost(name="hostD") # Target host for planned_vm
+
+        self.mock_cluster_state.hosts = [hostA, hostB, hostC, hostD]
+
+        # Define initial locations of VMs
+        self.mock_cluster_state.get_host_of_vm.side_effect = lambda vm_obj: {
+            vm_to_move: hostA,
+            planned_vm: hostC,
+            other_vm_in_group: hostA,
+        }.get(vm_obj)
+
+        # vm_distribution setup: all these VMs belong to group "appVM"
+        self.constraint_manager.vm_distribution = {
+            "appVM": [vm_to_move, planned_vm, other_vm_in_group]
+        }
+        # Also provide self.mock_cluster_state.vms for internal enforce_anti_affinity if it gets called
+        self.mock_cluster_state.vms = [vm_to_move, planned_vm, other_vm_in_group]
+
+        # Planned migration for planned_vm (appVM01) from hostC to hostD
+        planned_migrations = [{'vm': planned_vm, 'target_host': hostD}]
+
+        # Expected base_host_group_counts for "appVM" (before planned_migrations adjustment):
+        # hostA: 2 (appVM101, appVM02)
+        # hostB: 0
+        # hostC: 1 (appVM01)
+        # hostD: 0
+
+        # Expected adjusted_host_group_counts for "appVM" (after appVM01 planned C->D):
+        # hostA: 2
+        # hostB: 0
+        # hostC: 0 (appVM01 moved out)
+        # hostD: 1 (appVM01 moved in)
+        
+        # Capture the adjusted_host_group_counts passed to the helper methods
+        captured_counts_perfect = {}
+        captured_counts_better = {}
+
+        def capture_args_perfect_side_effect(vm, counts, source_host, active_hosts):
+            captured_counts_perfect.update(counts)
+            # Return a valid host to ensure this path is taken if possible
+            # For this test, we want hostB to be the perfectly balanced one after adjustments
+            if source_host == hostA.name: # vm_to_move is from hostA
+                # Counts after vm_to_move from A to B: A:1, B:1, C:0, D:1 -> Perfect
+                if counts.get(hostB.name, 0) == 0 and counts.get(hostA.name,0) == 2: # Based on expected adjusted counts
+                     return hostB 
+            return None 
+        
+        def capture_args_better_side_effect(vm, counts, source_host, source_count, active_hosts):
+            captured_counts_better.update(counts)
+            return None # Fallback, not the primary assertion point for counts
+
+        mock_find_perfect.side_effect = capture_args_perfect_side_effect
+        mock_find_better.side_effect = capture_args_better_side_effect
+        
+        # Call the method under test
+        preferred_host = self.constraint_manager.get_preferred_host_for_vm(
+            vm_to_move,
+            planned_migrations_this_cycle=planned_migrations
+        )
+
+        # Determine which captured_counts to use (perfect should be tried first)
+        final_captured_counts = captured_counts_perfect if mock_find_perfect.called else captured_counts_better
+
+        # 1. Assert that planned_vm (appVM01) was correctly identified by its prefix "appVM"
+        #    and thus adjusted the counts for hostC and hostD.
+        self.assertEqual(final_captured_counts.get(hostA.name), 2, "HostA count for appVM group should be 2.")
+        self.assertEqual(final_captured_counts.get(hostB.name), 0, "HostB count for appVM group should be 0.")
+        self.assertEqual(final_captured_counts.get(hostC.name), 0, "HostC count for appVM group should be 0 after planned move.")
+        self.assertEqual(final_captured_counts.get(hostD.name), 1, "HostD count for appVM group should be 1 after planned move.")
+
+        # 2. Assert that the chosen host is correct based on these adjusted counts.
+        # vm_to_move (appVM101) is on hostA (adjusted count 2 for group "appVM").
+        # Adjusted counts: hostA=2, hostB=0, hostC=0, hostD=1.
+        # Target candidates (excluding hostA):
+        #   - hostB (count 0): Moving appVM101 A->B => A:1, B:1, C:0, D:1. Min=0,Max=1. Perfect.
+        #   - hostC (count 0): Moving appVM101 A->C => A:1, B:0, C:1, D:1. Min=0,Max=1. Perfect.
+        #   - hostD (count 1): Moving appVM101 A->D => A:1, B:0, C:0, D:2. Min=0,Max=2. Not perfect.
+        # Between hostB and hostC (both count 0, both lead to perfect balance),
+        # the one with the lexicographically smaller name is chosen by _find_perfect_balance_host.
+        # So, hostB should be chosen.
+        self.assertIsNotNone(preferred_host, "A preferred host should have been found.")
+        self.assertEqual(preferred_host.name, hostB.name, 
+                         "Preferred host should be hostB based on adjusted counts and tie-breaking.")
+
 
 if __name__ == '__main__':
     unittest.main()
