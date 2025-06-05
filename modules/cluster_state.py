@@ -324,7 +324,7 @@ class ClusterState:
         cluster_cpu_usage = (total_cpu_usage / total_cpu_capacity * 100) if total_cpu_capacity > 0 else 0
         cluster_mem_usage = (total_mem_usage / total_mem_capacity * 100) if total_mem_capacity > 0 else 0
         
-        logger.info("\n=== Cluster Total Resource Usage ===")
+        logger.info("\n--- Cluster Total Resource Usage ---")
         logger.info(f"CPU: {cluster_cpu_usage:.1f}% ({total_cpu_usage}/{total_cpu_capacity} MHz)")
         logger.info(f"Memory: {cluster_mem_usage:.1f}% ({total_mem_usage}/{total_mem_capacity} MB)")
         logger.info(f"Total Disk I/O: {total_disk_io:.1f} MBps")
