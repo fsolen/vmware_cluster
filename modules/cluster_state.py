@@ -201,13 +201,12 @@ class ClusterState:
                 
                 self.host_metrics[host_obj.name] = current_host_metrics
                 
-                # Logging can be verbose, ensure it's needed or adjust level/content (already debug)
-                logger.info(f"Host {host_obj.name} annotated metrics:")
-                logger.info(f"  CPU: {current_host_metrics['cpu_usage_pct']:.1f}% ({current_host_metrics['cpu_usage']}/{current_host_metrics['cpu_capacity']} MHz)")
-                logger.info(f"  Memory: {current_host_metrics['memory_usage_pct']:.1f}% ({current_host_metrics['memory_usage']}/{current_host_metrics['memory_capacity']} MB)")
-                logger.info(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
-                logger.info(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
-                logger.info(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
+                logger.debug(f"Host {host_obj.name} annotated metrics:")
+                logger.debug(f"  CPU: {current_host_metrics['cpu_usage_pct']:.1f}% ({current_host_metrics['cpu_usage']}/{current_host_metrics['cpu_capacity']} MHz)")
+                logger.debug(f"  Memory: {current_host_metrics['memory_usage_pct']:.1f}% ({current_host_metrics['memory_usage']}/{current_host_metrics['memory_capacity']} MB)")
+                logger.debug(f"  Disk I/O: {current_host_metrics['disk_io_usage']:.1f} MBps (Capacity: {current_host_metrics['disk_io_capacity']:.1f} MBps)")
+                logger.debug(f"  Network I/O: {current_host_metrics['network_io_usage']:.1f} MBps (Capacity: {current_host_metrics['network_capacity']:.1f} MBps)")
+                logger.debug(f"  VMs: {', '.join(current_host_metrics['vms'])}\n")
 
             except AttributeError as ae:
                 logger.error(f"[ClusterState.annotate_hosts] AttributeError while processing host '{host_name_for_log}' (Type: {type(host_obj)}): {ae}")
@@ -281,8 +280,8 @@ class ClusterState:
         total_disk_io = 0
         total_net_io = 0
         
-        # Log overall cluster state
-        logger.info("\n--- Cluster State Summary ---")
+
+        logger.info("\n--- Host Summary ---")
 
         header = f"{'Cluster Name':<30} {'Hostname':<25} {'CPU %':<10} {'Mem %':<10} {'Storage I/O (MBps)':<20} {'Net Throughput (MBps)':<25} {'VM Count':<10}"
         logger.info(header)
@@ -302,7 +301,7 @@ class ClusterState:
             total_disk_io += metrics['disk_io_usage']
             total_net_io += metrics['network_io_usage']
             
-            logger.info(f" Host: {host_name}")
+            logger.info(f"Host: {host_name}")
             logger.info(f"├─ CPU: {metrics['cpu_usage_pct']:.1f}% ({metrics['cpu_usage']}/{metrics['cpu_capacity']} MHz)")
             logger.info(f"├─ Memory: {metrics['memory_usage_pct']:.1f}% ({metrics['memory_usage']}/{metrics['memory_capacity']} MB)")
             logger.info(f"├─ Disk I/O: {metrics['disk_io_usage']:.1f} MBps")
@@ -314,7 +313,7 @@ class ClusterState:
         for vm_name, metrics in self.vm_metrics.items():
             host_obj = self.get_host_of_vm(metrics['vm_obj']) # Renamed to host_obj for clarity
             host_display_name = host_obj.name if host_obj and hasattr(host_obj, 'name') else 'Unknown'
-            logger.info(f" VM: {vm_name} (on {host_display_name})")
+            logger.info(f"VM: {vm_name} (on {host_display_name})")
             logger.info(f"├─ CPU: {metrics.get('cpu_usage_abs', 0)} MHz")
             logger.info(f"├─ Memory: {metrics.get('memory_usage_abs', 0)} MB")
             logger.info(f"├─ Disk I/O: {metrics.get('disk_io_usage_abs', 0):.1f} MBps")
