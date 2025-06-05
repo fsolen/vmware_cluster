@@ -160,10 +160,11 @@ class ClusterState:
                 # Original logic for a host
                 rm_host_metrics = resource_monitor.get_host_metrics(host_obj)
                 current_host_metrics = {
-                    'cpu_usage': 0, 
-                    'memory_usage': 0,
-                    'disk_io_usage': 0,
-                    'network_io_usage': 0,
+                    'cpu_usage': 0, # Still summed from VMs for now
+                    # Directly use host's overall memory usage
+                    'memory_usage': host_obj.summary.quickStats.overallMemoryUsage if host_obj.summary and host_obj.summary.quickStats else 0,
+                    'disk_io_usage': 0, # Still summed from VMs
+                    'network_io_usage': 0, # Still summed from VMs
                     'cpu_capacity': rm_host_metrics.get('cpu_capacity', 0),
                     'memory_capacity': rm_host_metrics.get('memory_capacity', 0),
                     'disk_io_capacity': rm_host_metrics.get('disk_io_capacity', 1),
@@ -175,7 +176,7 @@ class ClusterState:
                     vm_metrics_data = self.vm_metrics.get(vm_on_host.name, {})
                     # ... (summation logic) ...
                     current_host_metrics['cpu_usage'] += vm_metrics_data.get('cpu_usage_abs', 0)
-                    current_host_metrics['memory_usage'] += vm_metrics_data.get('memory_usage_abs', 0)
+                    # The line for memory_usage summation is now removed.
                     current_host_metrics['disk_io_usage'] += vm_metrics_data.get('disk_io_usage_abs', 0)
                     current_host_metrics['network_io_usage'] += vm_metrics_data.get('network_io_usage_abs', 0)
                     current_host_metrics['vms'].append(vm_on_host.name)
@@ -290,8 +291,9 @@ class ClusterState:
         # VM distribution analysis
         logger.info("\n--- VM Resource Consumption ---")
         for vm_name, metrics in self.vm_metrics.items():
-            host_name = self.get_host_of_vm(metrics['vm_obj'])
-            logger.info(f"\nVM: {vm_name} (on {host_name})")
+            host_obj = self.get_host_of_vm(metrics['vm_obj']) # Renamed to host_obj for clarity
+            host_display_name = host_obj.name if host_obj and hasattr(host_obj, 'name') else 'Unknown'
+            logger.info(f"\nVM: {vm_name} (on {host_display_name})")
             logger.info(f"├─ CPU: {metrics.get('cpu_usage_abs', 0)} MHz")
             logger.info(f"├─ Memory: {metrics.get('memory_usage_abs', 0)} MB")
             logger.info(f"├─ Disk I/O: {metrics.get('disk_io_usage_abs', 0):.1f} MBps")

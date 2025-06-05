@@ -276,6 +276,106 @@ class TestClusterState(unittest.TestCase):
         mock_cs_logger.info.assert_any_call("Total Disk I/O: 50.0 MBps")
         mock_cs_logger.info.assert_any_call("Total Network I/O: 20.0 MBps")
 
+    def test_annotate_hosts_memory_usage_from_host_summary(self):
+        """
+        Verify that host memory_usage is taken from host.summary.quickStats.overallMemoryUsage
+        and not summed from VM guest memory.
+        """
+        # 1. Mock ResourceMonitor
+        mock_resource_monitor = MagicMock()
+        # Define what get_host_metrics returns for capacities
+        # Note: memory_capacity from get_host_metrics is host.summary.hardware.memorySize / (1024*1024)
+        # overallMemoryUsage is in MB.
+        mock_resource_monitor.get_host_metrics.return_value = {
+            'cpu_capacity': 2000, # MHz
+            'memory_capacity': 4096, # MB (e.g. 4GB host, this value is expected after division)
+            'disk_io_capacity': 100, # MBps
+            'network_capacity': 1000 # Mbps
+        }
+
+        # 2. Create Mock Host
+        mock_host1 = MagicMock(spec=vim.HostSystem)
+        mock_host1.name = "host1"
+        mock_host1._moId = "host-moid-1"
+        mock_host1.summary = MagicMock()
+        mock_host1.summary.quickStats = MagicMock()
+        mock_host1.summary.quickStats.overallMemoryUsage = 2048 # Host reports 2048 MB used (Consumed)
+        # The memorySize would be used by ResourceMonitor to calculate 'memory_capacity'
+        # For this test, we mock get_host_metrics to provide memory_capacity directly.
+
+        # 3. Create Mock VMs for this host
+        mock_vm1 = MagicMock(spec=vim.VirtualMachine)
+        mock_vm1.name = "vm1_on_host1"
+        mock_vm1._moId = "vm-moid-1"
+        mock_vm1.runtime = MagicMock()
+        mock_vm1.runtime.host = mock_host1
+        mock_vm1.summary = MagicMock()
+        mock_vm1.summary.quickStats = MagicMock()
+        mock_vm1.summary.quickStats.guestMemoryUsage = 512 # VM Guest active memory (should NOT be used for host total)
+        mock_vm1.summary.quickStats.overallCpuUsage = 100 # VM CPU usage (should be summed)
+
+        mock_vm2 = MagicMock(spec=vim.VirtualMachine)
+        mock_vm2.name = "vm2_on_host1"
+        mock_vm2._moId = "vm-moid-2"
+        mock_vm2.runtime = MagicMock()
+        mock_vm2.runtime.host = mock_host1
+        mock_vm2.summary = MagicMock()
+        mock_vm2.summary.quickStats = MagicMock()
+        mock_vm2.summary.quickStats.guestMemoryUsage = 1024 # VM Guest active memory
+        mock_vm2.summary.quickStats.overallCpuUsage = 200 # VM CPU usage
+
+        # 4. Initialize ClusterState and its attributes
+        # Use a fresh instance for this test, or ensure setUp is appropriate
+        # For simplicity, create a new one, or carefully manage self.cluster_state from setUp
+        # We will use self.cluster_state from setUp, but override its hosts and vms for this test
+        self.cluster_state.hosts = [mock_host1]
+        self.cluster_state.vms = [mock_vm1, mock_vm2]
+
+        # Pre-populate vm_metrics (as done by annotate_vms_with_metrics)
+        # disk_io_usage_abs and network_io_usage_abs are mocked from resource_monitor.get_vm_metrics
+        # For this test, let's assume they are 0 or some value, focus is on memory.
+        with patch.object(mock_resource_monitor, 'get_vm_metrics') as mock_get_vm_metrics:
+            mock_get_vm_metrics.side_effect = lambda vm: {
+                'disk_io_usage': 10 if vm == mock_vm1 else 5, # Example values
+                'network_io_usage': 2 if vm == mock_vm1 else 1
+            }
+            # Call annotate_vms_with_metrics to populate self.cluster_state.vm_metrics
+            self.cluster_state.annotate_vms_with_metrics(mock_resource_monitor)
+
+
+        # Ensure get_vms_on_host returns the correct VMs for the host
+        self.cluster_state.get_vms_on_host = MagicMock(return_value=[mock_vm1, mock_vm2])
+
+        # 5. Call annotate_hosts_with_metrics
+        self.cluster_state.annotate_hosts_with_metrics(mock_resource_monitor)
+
+        # 6. Assertions
+        host_metrics_data = self.cluster_state.host_metrics.get("host1")
+        self.assertIsNotNone(host_metrics_data)
+
+        # Assert Memory Usage (Primary test goal)
+        # Should be host's overallMemoryUsage, not sum of VMs' guestMemoryUsage (512+1024=1536)
+        self.assertEqual(host_metrics_data['memory_usage'], 2048)
+
+        # Assert Memory Capacity (comes from mocked get_host_metrics)
+        self.assertEqual(host_metrics_data['memory_capacity'], 4096)
+
+        # Assert Memory Usage Percentage
+        expected_mem_pct = (2048 / 4096) * 100 if 4096 > 0 else 0
+        self.assertAlmostEqual(host_metrics_data['memory_usage_pct'], expected_mem_pct)
+
+        # Assert CPU Usage (should still be sum of VM CPU)
+        # vm1 CPU = 100, vm2 CPU = 200. Total = 300.
+        self.assertEqual(host_metrics_data['cpu_usage'], 300)
+        expected_cpu_pct = (300 / 2000) * 100 if 2000 > 0 else 0
+        self.assertAlmostEqual(host_metrics_data['cpu_usage_pct'], expected_cpu_pct)
+
+        # Assert Disk and Network are summed (based on mock_get_vm_metrics)
+        # Disk: 10 (vm1) + 5 (vm2) = 15
+        # Network: 2 (vm1) + 1 (vm2) = 3
+        self.assertEqual(host_metrics_data['disk_io_usage'], 15)
+        self.assertEqual(host_metrics_data['network_io_usage'], 3)
+
 
 if __name__ == '__main__':
     unittest.main()
