@@ -170,8 +170,21 @@ class ClusterState:
                     'disk_io_capacity': rm_host_metrics.get('disk_io_capacity', 1),
                     'network_capacity': rm_host_metrics.get('network_capacity', 1),
                     'vms': [],
-                    'host_obj': host_obj
+                    'host_obj': host_obj,
+                    'cluster_name': "N/A" # Default cluster name
                 }
+                
+                # Get cluster name
+                try:
+                    if host_obj.parent and hasattr(host_obj.parent, 'name'):
+                        current_host_metrics['cluster_name'] = host_obj.parent.name
+                    else:
+                        logger.debug(f"Host {host_name_for_log} parent or parent.name not found. Defaulting cluster_name.")
+                except AttributeError as e:
+                    logger.warning(f"AttributeError getting cluster name for host {host_name_for_log}: {e}. Defaulting cluster_name.")
+                except Exception as e: # Catch any other unexpected errors
+                    logger.error(f"Unexpected error getting cluster name for host {host_name_for_log}: {e}. Defaulting cluster_name.")
+
                 for vm_on_host in self.get_vms_on_host(host_obj):
                     vm_metrics_data = self.vm_metrics.get(vm_on_host.name, {})
                     # ... (summation logic) ...
@@ -270,27 +283,16 @@ class ClusterState:
         
         # Log overall cluster state
         logger.info("\n=== Cluster State Summary ===")
-        # Attempt to get vCenter name
-        vcenter_name = "N/A" # Default
-        try:
-            if self.service_instance and self.service_instance.content and self.service_instance.content.about:
-                vcenter_name = self.service_instance.content.about.name
-            if not vcenter_name and self.service_instance and self.service_instance._stub: # Fallback
-                 vcenter_name = self.service_instance._stub.host
-        except Exception as e:
-            logger.debug(f"Could not retrieve vCenter name: {e}")
-            if self.service_instance and self.service_instance._stub: # Fallback in case of exception with .about.name
-                 vcenter_name = self.service_instance._stub.host
-            else:
-                vcenter_name = "N/A"
 
-
-        header = f"{'Cluster/vCenter':<30} {'Hostname':<25} {'CPU %':<10} {'Mem %':<10} {'Storage I/O (MBps)':<20} {'Net Throughput (MBps)':<25} {'VM Count':<10}"
+        # Header for the table - Changed "Cluster/vCenter" to "Cluster Name"
+        header = f"{'Cluster Name':<30} {'Hostname':<25} {'CPU %':<10} {'Mem %':<10} {'Storage I/O (MBps)':<20} {'Net Throughput (MBps)':<25} {'VM Count':<10}"
         logger.info(header)
         logger.info("-" * len(header))
 
+        # Data rows for the table - Using metrics.get('cluster_name')
         for host_name, metrics in self.host_metrics.items():
-            logger.info(f"{vcenter_name:<30} {host_name:<25} {metrics.get('cpu_usage_pct', 0):<10.1f} {metrics.get('memory_usage_pct', 0):<10.1f} {metrics.get('disk_io_usage', 0):<20.1f} {metrics.get('network_io_usage', 0):<25.1f} {len(metrics.get('vms', [])):<10}")
+            cluster_name_to_log = metrics.get('cluster_name', 'N/A') # Get cluster name from host_metrics
+            logger.info(f"{cluster_name_to_log:<30} {host_name:<25} {metrics.get('cpu_usage_pct', 0):<10.1f} {metrics.get('memory_usage_pct', 0):<10.1f} {metrics.get('disk_io_usage', 0):<20.1f} {metrics.get('network_io_usage', 0):<25.1f} {len(metrics.get('vms', [])):<10}")
         
         # Host-level statistics (this section title will now follow the summary table)
         logger.info("\n--- Host Resource Distribution ---")
