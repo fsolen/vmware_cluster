@@ -322,6 +322,89 @@ class TestConstraintManager(unittest.TestCase):
         self.assertEqual(preferred_host.name, "hostC",
                          "hostC should be chosen as it becomes the best option after considering planned migrations.")
 
+    def test_get_preferred_host_for_vm_affinity_grouping(self):
+        """
+        Test that get_preferred_host_for_vm correctly groups VMs like "vm01" and "vm101"
+        under the same prefix "vm" when determining preferred hosts.
+        """
+        vm_to_move = MockVM(name="vm101") # VM to be moved
+        vm_group_mate1 = MockVM(name="vm01")
+        vm_group_mate2 = MockVM(name="vm02")
+
+        source_host = MockHost(name="hostA")
+        target_host_b = MockHost(name="hostB")
+        target_host_c = MockHost(name="hostC")
+
+        # Setup cluster state
+        self.mock_cluster_state.hosts = [source_host, target_host_b, target_host_c]
+        
+        # All VMs are initially on source_host
+        self.mock_cluster_state.get_host_of_vm.side_effect = lambda vm_obj: {
+            vm_to_move: source_host,
+            vm_group_mate1: source_host,
+            vm_group_mate2: source_host,
+        }.get(vm_obj)
+
+        # Pre-populate vm_distribution. This is key.
+        # The prefix for "vm101", "vm01", "vm02" should be "vm".
+        self.constraint_manager.vm_distribution = {
+            "vm": [vm_to_move, vm_group_mate1, vm_group_mate2]
+        }
+        # Ensure enforce_anti_affinity is not called and overwriting vm_distribution
+        # by also setting self.mock_cluster_state.vms if it were to be called.
+        self.mock_cluster_state.vms = [vm_to_move, vm_group_mate1, vm_group_mate2]
+
+
+        # Current counts for group "vm": hostA=3, hostB=0, hostC=0
+        # If vm101 (vm_to_move) moves from hostA (becomes 2) to hostB (becomes 1):
+        # Simulated counts: hostA=2, hostB=1, hostC=0. Max-Min = 2. Not perfect.
+        # If vm101 (vm_to_move) moves from hostA (becomes 2) to hostC (becomes 1):
+        # Simulated counts: hostA=2, hostB=0, hostC=1. Max-Min = 2. Not perfect.
+        
+        # Let's adjust the scenario for a clearer "perfect" or "better" outcome.
+        # Say vm_group_mate2 is on hostB.
+        # Initial state: vm101 (hostA), vm01 (hostA), vm02 (hostB)
+        # vm_distribution: {'vm': [vm101, vm01, vm02]}
+        # get_host_of_vm: vm101->hostA, vm01->hostA, vm02->hostB
+        # Base counts for "vm": hostA=2, hostB=1, hostC=0.
+        # vm_to_move is vm101 from hostA.
+        # If vm101 moves from hostA (becomes 1) to hostC (becomes 1):
+        # Simulated: hostA=1, hostB=1, hostC=1. Max-Min = 0. Perfect! -> target_host_c
+
+        self.mock_cluster_state.get_host_of_vm.side_effect = lambda vm_obj: {
+            vm_to_move: source_host,
+            vm_group_mate1: source_host,
+            vm_group_mate2: target_host_b, # This VM is on hostB
+        }.get(vm_obj)
+        
+        self.constraint_manager.vm_distribution = {
+            "vm": [vm_to_move, vm_group_mate1, vm_group_mate2]
+        }
+        self.mock_cluster_state.vms = [vm_to_move, vm_group_mate1, vm_group_mate2]
+
+
+        # Call the method under test
+        preferred_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move, planned_migrations_this_cycle=None)
+
+        # Assertion:
+        # The core of the test is that `get_preferred_host_for_vm` uses "vm" as the prefix.
+        # If it used "vm1" or "vm101", it wouldn't find the group in `self.constraint_manager.vm_distribution`
+        # and would likely return None or error.
+        # A non-None result implies the group was found and processed.
+        self.assertIsNotNone(preferred_host, "A preferred host should be found if affinity grouping is correct.")
+        
+        # Based on the adjusted scenario: hostA (2 initially), hostB (1 initially), hostC (0 initially)
+        # vm_to_move is vm101 from hostA.
+        # Adjusted counts for source hostA for group "vm" = 2.
+        # Potential targets: hostB (count 1), hostC (count 0)
+        # Moving vm101 from hostA to hostC:
+        #   Simulated counts: hostA=1, hostB=1, hostC=1. Max-Min = 0. This is a perfect balance.
+        #   hostC has current count 0, which is the lowest.
+        # Moving vm101 from hostA to hostB:
+        #   Simulated counts: hostA=1, hostB=2, hostC=0. Max-Min = 2. Not perfect.
+        self.assertEqual(preferred_host.name, target_host_c.name,
+                         "Preferred host should be hostC for perfect balance based on 'vm' group.")
+
 
 if __name__ == '__main__':
     unittest.main()
