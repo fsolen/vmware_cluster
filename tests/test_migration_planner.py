@@ -422,6 +422,57 @@ class TestMigrationPlanner(unittest.TestCase):
         self.assertEqual(len(final_plan_tuples), 1)
         self.assertIn((self.vm1, self.host2), final_plan_tuples) # Only the first AA mig
 
+    @patch('modules.migration_planner.logger')
+    def test_plan_balancing_migrations_logs_imbalance_details_formatted(self, mock_logger):
+        """
+        Test that _plan_balancing_migrations logs imbalance_details in the new formatted way.
+        """
+        sample_imbalance_details = {
+            'cpu': {'is_imbalanced': True, 'current_diff': 19.72, 'threshold': 15.0, 'min_usage': 0.37, 'max_usage': 20.09, 'avg_usage': 7.25},
+            'memory': {'is_imbalanced': True, 'current_diff': 22.81, 'threshold': 15.0, 'min_usage': 3.23, 'max_usage': 26.04, 'avg_usage': 13.48},
+            'disk': {'is_imbalanced': False, 'current_diff': 0.02, 'threshold': 15.0, 'min_usage': 0.0, 'max_usage': 0.02, 'avg_usage': 0.01}
+        }
+        self.mock_load_evaluator.evaluate_imbalance.return_value = sample_imbalance_details
+        
+        # Mock cluster_state.hosts to be an empty list to prevent iteration errors if not fully mocked
+        # Or ensure it's properly mocked if _plan_balancing_migrations uses it extensively.
+        # For this specific logging test, the primary input is imbalance_details.
+        # However, _plan_balancing_migrations does iterate over `all_hosts_objects = self.cluster_state.hosts`
+        # So, it needs to be a valid iterable, even if empty for this test's focus.
+        self.mock_cluster_state.hosts = [] # Minimal setup for this test
+
+        # Call _plan_balancing_migrations
+        # Arguments: vms_in_migration_plan, host_resource_percentages_map_for_decision, 
+        #            current_planned_migrations_list, sim_cpu_p_override, sim_mem_p_override, 
+        #            sim_disk_p_override, sim_net_p_override
+        self.planner._plan_balancing_migrations(set(), {}, [], None, None, None, None)
+
+        # Assert logger calls
+        log_calls = mock_logger.info.call_args_list
+
+        expected_header_call = call("[MigrationPlanner_Balance] Cluster imbalance details (post-AA sim if any):")
+        self.assertIn(expected_header_call, log_calls)
+
+        # Check logs for each resource
+        for resource_name, details in sample_imbalance_details.items():
+            expected_log = (
+                f"  Resource: {resource_name}, Imbalanced: {details.get('is_imbalanced')}, "
+                f"Diff: {details.get('current_diff', 0):.2f}%, "
+                f"Threshold: {details.get('threshold', 0):.2f}%, "
+                f"Min: {details.get('min_usage', 0):.2f}%, "
+                f"Max: {details.get('max_usage', 0):.2f}%, "
+                f"Avg: {details.get('avg_usage', 0):.2f}%"
+            )
+            self.assertIn(call(expected_log), log_calls, f"Log for resource {resource_name} not found or incorrect.")
+            
+        # Total calls: 1 for header + 1 for each resource type (3 in this sample)
+        # Plus, if problematic_resources_names is not empty (it is here), one more log.
+        # And if problematic_resources_names is empty, one log saying "No specific resource marked as imbalanced".
+        # In this case, 'cpu' and 'memory' are imbalanced.
+        expected_problematic_log = call(f"[MigrationPlanner_Balance] Problematic resources for balancing (post-AA sim): {['cpu', 'memory']}")
+        self.assertIn(expected_problematic_log, log_calls)
+        self.assertEqual(mock_logger.info.call_count, 1 + len(sample_imbalance_details) + 1)
+
 
 if __name__ == '__main__':
     unittest.main()
