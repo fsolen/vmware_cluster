@@ -282,14 +282,12 @@ class ClusterState:
         total_net_io = 0
         
         # Log overall cluster state
-        logger.info("\n=== Cluster State Summary ===")
+        logger.info("\n--- Cluster State Summary ---")
 
-        # Header for the table - Changed "Cluster/vCenter" to "Cluster Name"
         header = f"{'Cluster Name':<30} {'Hostname':<25} {'CPU %':<10} {'Mem %':<10} {'Storage I/O (MBps)':<20} {'Net Throughput (MBps)':<25} {'VM Count':<10}"
         logger.info(header)
         logger.info("-" * len(header))
 
-        # Data rows for the table - Using metrics.get('cluster_name')
         for host_name, metrics in self.host_metrics.items():
             cluster_name_to_log = metrics.get('cluster_name', 'N/A') # Get cluster name from host_metrics
             logger.info(f"{cluster_name_to_log:<30} {host_name:<25} {metrics.get('cpu_usage_pct', 0):<10.1f} {metrics.get('memory_usage_pct', 0):<10.1f} {metrics.get('disk_io_usage', 0):<20.1f} {metrics.get('network_io_usage', 0):<25.1f} {len(metrics.get('vms', [])):<10}")
