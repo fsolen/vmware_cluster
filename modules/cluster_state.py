@@ -302,7 +302,7 @@ class ClusterState:
             total_disk_io += metrics['disk_io_usage']
             total_net_io += metrics['network_io_usage']
             
-            logger.info(f"\nHost: {host_name}")
+            logger.info(f" Host: {host_name}")
             logger.info(f"├─ CPU: {metrics['cpu_usage_pct']:.1f}% ({metrics['cpu_usage']}/{metrics['cpu_capacity']} MHz)")
             logger.info(f"├─ Memory: {metrics['memory_usage_pct']:.1f}% ({metrics['memory_usage']}/{metrics['memory_capacity']} MB)")
             logger.info(f"├─ Disk I/O: {metrics['disk_io_usage']:.1f} MBps")
@@ -314,7 +314,7 @@ class ClusterState:
         for vm_name, metrics in self.vm_metrics.items():
             host_obj = self.get_host_of_vm(metrics['vm_obj']) # Renamed to host_obj for clarity
             host_display_name = host_obj.name if host_obj and hasattr(host_obj, 'name') else 'Unknown'
-            logger.info(f"\nVM: {vm_name} (on {host_display_name})")
+            logger.info(f" VM: {vm_name} (on {host_display_name})")
             logger.info(f"├─ CPU: {metrics.get('cpu_usage_abs', 0)} MHz")
             logger.info(f"├─ Memory: {metrics.get('memory_usage_abs', 0)} MB")
             logger.info(f"├─ Disk I/O: {metrics.get('disk_io_usage_abs', 0):.1f} MBps")
