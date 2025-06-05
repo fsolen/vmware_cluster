@@ -10,33 +10,31 @@ class ConstraintManager:
 
     def enforce_anti_affinity(self):
         '''
-        Groups VMs by prefix (ignoring last 2 chars).
+        Groups VMs by prefix (ignoring trailing digits).
         This populates self.vm_distribution.
         '''
         logger.info("[ConstraintManager] Grouping VMs by prefix for Anti-Affinity rules...")
         self.vm_distribution = {}
         all_vms = self.cluster_state.vms
-
+    
         if not all_vms:
             logger.info("[ConstraintManager] No VMs found in cluster state.")
             return
-
+    
         for vm in all_vms:
-            if not hasattr(vm, 'name') or len(vm.name) < 3: 
+            if not hasattr(vm, 'name') or not isinstance(vm.name, str) or len(vm.name) < 1:
                 logger.warning(f"[ConstraintManager] VM with invalid name or missing name attribute skipped: {getattr(vm, 'name', 'UnknownVM')}")
                 continue
-            
-            name_part = vm.name.rstrip('0123456789')
-            if name_part: # Ensure rstrip didn't leave an empty string
-                short_name = name_part
-            else: 
-                short_name = vm.name # Use original name if rstrip results in empty (e.g. name is "123")
-
-            if short_name not in self.vm_distribution:
-                self.vm_distribution[short_name] = []
-            self.vm_distribution[short_name].append(vm)
-
-        logger.debug(f"[ConstraintManager] Grouped VMs by prefix: {{k: [vm.name for vm in vms] for k, vms in self.vm_distribution.items()}}")
+    
+            # Strip trailing digits to form the group key
+            short_name = vm.name.rstrip('0123456789') or vm.name
+    
+            # Add VM to the group
+            self.vm_distribution.setdefault(short_name, []).append(vm)
+    
+        # Properly format and print the distribution
+        grouped_info = {k: [v.name for v in vms] for k, vms in self.vm_distribution.items()}
+        logger.debug(f"[ConstraintManager] Grouped VMs by prefix: {grouped_info}")
 
     def calculate_anti_affinity_violations(self):
         # Escaped internal double quotes
