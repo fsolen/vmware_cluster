@@ -50,10 +50,12 @@ class TestMigrationPlanner(unittest.TestCase):
         self.mock_cluster_state.get_host_of_vm.side_effect = lambda vm_obj: vm_obj.host
 
         # Mock host_metrics and vm_metrics in cluster_state
+        # Ensure 'memory_usage' key holds the host's absolute total memory usage,
+        # consistent with ClusterState.annotate_hosts_with_metrics.
         self.mock_cluster_state.host_metrics = {
-            "host1": {'cpu_usage': 300, 'cpu_capacity': 1000, 'memory_usage_abs': 3072, 'memory_capacity': 8192, 'disk_io_usage': 0, 'disk_io_capacity': 1, 'network_io_usage': 0, 'network_capacity': 1},
-            "host2": {'cpu_usage': 150, 'cpu_capacity': 1000, 'memory_usage_abs': 1536, 'memory_capacity': 8192, 'disk_io_usage': 0, 'disk_io_capacity': 1, 'network_io_usage': 0, 'network_capacity': 1},
-            "host3": {'cpu_usage': 50,  'cpu_capacity': 1000, 'memory_usage_abs': 1024, 'memory_capacity': 8192, 'disk_io_usage': 0, 'disk_io_capacity': 1, 'network_io_usage': 0, 'network_capacity': 1},
+            "host1": {'cpu_usage': 300, 'cpu_capacity': 1000, 'memory_usage': 3072, 'memory_capacity': 8192, 'disk_io_usage': 0, 'disk_io_capacity': 1, 'network_io_usage': 0, 'network_capacity': 1},
+            "host2": {'cpu_usage': 150, 'cpu_capacity': 1000, 'memory_usage': 1536, 'memory_capacity': 8192, 'disk_io_usage': 0, 'disk_io_capacity': 1, 'network_io_usage': 0, 'network_capacity': 1},
+            "host3": {'cpu_usage': 50,  'cpu_capacity': 1000, 'memory_usage': 1024, 'memory_capacity': 8192, 'disk_io_usage': 0, 'disk_io_capacity': 1, 'network_io_usage': 0, 'network_capacity': 1},
         }
         self.mock_cluster_state.vm_metrics = {
             "vm1": self.vm1.metrics,
@@ -114,43 +116,75 @@ class TestMigrationPlanner(unittest.TestCase):
         self.assertEqual(planner_string.max_total_migrations, 15)
 
 
-    def test_get_simulated_load_lists_after_migrations(self):
-        """Test the simulation of migrations on load data."""
+    def test_get_simulated_load_data_after_migrations_correctly_updates_targets(self): # Renamed and enhanced
+        """
+        Test the simulation of migrations on load data, ensuring all targets are updated
+        and lists/maps are consistent. Reflects new method name and signature.
+        """
+        # vm1 (100 CPU, 1024 MEM) from host1 (initial on host1)
+        # vm3 (150 CPU, 1536 MEM) from host2 (initial on host2)
         migrations_to_simulate = [
-            {'vm': self.vm1, 'target_host': self.host2} # vm1 (100 CPU, 1024 MEM) from host1 to host2
+            {'vm': self.vm1, 'target_host': self.host2}, # vm1 from host1 to host2
+            {'vm': self.vm3, 'target_host': self.host3}  # vm3 from host2 to host3
         ]
-        # Initial host1: CPU 300/1000 (30%), MEM 3072/8192 (37.5%)
-        # Initial host2: CPU 150/1000 (15%), MEM 1536/8192 (18.75%)
 
-        # After vm1 moves from host1 to host2:
-        # host1 CPU: 300 - 100 = 200 (20%)
-        # host1 MEM: 3072 - 1024 = 2048 (25%)
-        # host2 CPU: 150 + 100 = 250 (25%)
-        # host2 MEM: 1536 + 1024 = 2560 (31.25%)
-        # host3 remains 50 CPU (5%), 1024 MEM (12.5%)
+        # Initial absolute states from setUp's self.mock_cluster_state.host_metrics:
+        # host1: cpu_usage 300, mem_usage_abs 3072 (overallMemoryUsage from ClusterState change)
+        # host2: cpu_usage 150, mem_usage_abs 1536
+        # host3: cpu_usage 50,  mem_usage_abs 1024
+        # Capacities: CPU 1000, Mem 8192 for all.
 
-        expected_cpu_p = [20.0, 25.0, 5.0]
-        expected_mem_p = [25.0, 31.25, 12.5]
+        # VM metrics from setUp:
+        # vm1: cpu_usage_abs 100, memory_usage_abs 1024
+        # vm3: cpu_usage_abs 150, memory_usage_abs 1536
 
+        # Simulation Step 1: vm1 (100C, 1024M) moves from host1 to host2
+        # host1: cpu_usage_abs = 300-100=200, mem_usage_abs = 3072-1024=2048
+        # host2: cpu_usage_abs = 150+100=250, mem_usage_abs = 1536+1024=2560
+        # host3: no change yet (cpu 50, mem 1024)
+
+        # Simulation Step 2: vm3 (150C, 1536M) moves from host2 to host3
+        # host1: no change (cpu 200, mem 2048)
+        # host2: cpu_usage_abs = 250-150=100, mem_usage_abs = 2560-1536=1024
+        # host3: cpu_usage_abs = 50+150=200,  mem_usage_abs = 1024+1536=2560
+
+        # Expected final absolute usages for CPU/Memory:
+        # host1: CPU 200, Mem 2048
+        # host2: CPU 100, Mem 1024
+        # host3: CPU 200, Mem 2560
+
+        # Expected percentages (capacities: CPU 1000, Mem 8192 for all from setUp):
+        # host1: CPU 200/1000 = 20.0%, Mem 2048/8192 = 25.0%
+        # host2: CPU 100/1000 = 10.0%, Mem 1024/8192 = 12.5%
+        # host3: CPU 200/1000 = 20.0%, Mem 2560/8192 = 31.25%
+
+        # self.mock_load_evaluator.hosts is [self.host1, self.host2, self.host3] in setUp.
+        # This order is used by _get_simulated_load_data_after_migrations to create lists.
+        expected_cpu_p = [20.0, 10.0, 20.0]
+        expected_mem_p = [25.0, 12.5, 31.25]
+
+        # Call the method with new signature (no initial_host_load_map)
         sim_cpu, sim_mem, sim_disk, sim_net, sim_map = \
-            self.planner._get_simulated_load_lists_after_migrations(
-                self.initial_host_map, migrations_to_simulate
-            )
+            self.planner._get_simulated_load_data_after_migrations(migrations_to_simulate)
 
-        self.assertEqual(sim_cpu, expected_cpu_p)
-        self.assertEqual(sim_mem, expected_mem_p)
-        self.assertEqual(sim_disk, self.initial_disk_p) # Passed through
-        self.assertEqual(sim_net, self.initial_net_p)   # Passed through
+        self.assertEqual(sim_cpu, expected_cpu_p, "Simulated CPU percentages list is incorrect.")
+        self.assertEqual(sim_mem, expected_mem_p, "Simulated Memory percentages list is incorrect.")
 
-        expected_sim_map_host1 = {'cpu': 20.0, 'memory': 25.0, 'disk': self.initial_disk_p[0], 'network': self.initial_net_p[0]}
-        self.assertEqual(sim_map['host1'], expected_sim_map_host1)
-        expected_sim_map_host2 = {'cpu': 25.0, 'memory': 31.25, 'disk': self.initial_disk_p[1], 'network': self.initial_net_p[1]}
-        self.assertEqual(sim_map['host2'], expected_sim_map_host2)
+        # Disk and Network percentages should be the original ones, passed through
+        # self.initial_disk_p and self.initial_net_p are set in setUp from get_resource_percentage_lists
+        self.assertEqual(sim_disk, self.initial_disk_p, "Disk percentages should be passed through.")
+        self.assertEqual(sim_net, self.initial_net_p, "Network percentages should be passed through.")
+
+        # Verify the map contents for all hosts
+        # The order of hosts in self.initial_disk_p corresponds to host1, host2, host3
+        self.assertEqual(sim_map.get("host1"), {'cpu': 20.0, 'memory': 25.0, 'disk': self.initial_disk_p[0], 'network': self.initial_net_p[0]})
+        self.assertEqual(sim_map.get("host2"), {'cpu': 10.0, 'memory': 12.5, 'disk': self.initial_disk_p[1], 'network': self.initial_net_p[1]})
+        self.assertEqual(sim_map.get("host3"), {'cpu': 20.0, 'memory': 31.25, 'disk': self.initial_disk_p[2], 'network': self.initial_net_p[2]})
 
 
-    @patch('modules.migration_planner.MigrationManager._get_simulated_load_lists_after_migrations')
+    @patch('modules.migration_planner.MigrationManager._get_simulated_load_data_after_migrations') # Updated patch name
     def test_plan_migrations_iterative_path_with_aa_moves(
-        self, mock_get_simulated_load
+        self, mock_get_simulated_load_data # Updated mock name
     ):
         """Test plan_migrations when AA moves occur, triggering simulation."""
         # Mock AA planner to return one migration
@@ -163,9 +197,9 @@ class TestMigrationPlanner(unittest.TestCase):
         sim_disk_p = self.initial_disk_p
         sim_net_p = self.initial_net_p
         sim_map = {"host1": {'cpu': 20.0, 'memory': 25.0, 'disk':0,'network':0},
-                   "host2": {'cpu': 25.0, 'memory': 31.25, 'disk':0,'network':0}, # Simplified, ensure keys exist
+                   "host2": {'cpu': 25.0, 'memory': 31.25, 'disk':0,'network':0},
                    "host3": {'cpu': 5.0, 'memory': 12.5, 'disk':0,'network':0}}
-        mock_get_simulated_load.return_value = (sim_cpu_p, sim_mem_p, sim_disk_p, sim_net_p, sim_map)
+        mock_get_simulated_load_data.return_value = (sim_cpu_p, sim_mem_p, sim_disk_p, sim_net_p, sim_map) # Updated mock name
 
         # Mock load evaluator to be called with simulated data
         # Ensure max_usage aligns with sim_cpu_p for host2 to be selected as source
@@ -188,7 +222,7 @@ class TestMigrationPlanner(unittest.TestCase):
         final_plan = self.planner.plan_migrations()
 
         self.planner._plan_anti_affinity_migrations.assert_called_once()
-        mock_get_simulated_load.assert_called_once_with(self.initial_host_map, [aa_migration])
+        mock_get_simulated_load_data.assert_called_once_with([aa_migration]) # Call signature updated
 
         # Check that evaluate_imbalance was called with simulated overrides
         self.mock_load_evaluator.evaluate_imbalance.assert_called_once_with(
@@ -210,8 +244,8 @@ class TestMigrationPlanner(unittest.TestCase):
         """Test plan_migrations when no AA moves, uses initial load for balancing."""
         self.planner._plan_anti_affinity_migrations = MagicMock(return_value=[]) # No AA moves
 
-        # Mock simulation (should not be called directly, but _plan_balancing_migrations needs its args)
-        self.planner._get_simulated_load_lists_after_migrations = MagicMock()
+        # Mock simulation (should not be called directly as no AA migs)
+        self.planner._get_simulated_load_data_after_migrations = MagicMock() # Updated mock name
 
         mock_initial_imbalance_details = {'cpu': {'is_imbalanced': False}} # Example
         self.mock_load_evaluator.evaluate_imbalance.return_value = mock_initial_imbalance_details # Configure existing mock
@@ -224,7 +258,7 @@ class TestMigrationPlanner(unittest.TestCase):
         self.planner.plan_migrations()
 
         self.planner._plan_anti_affinity_migrations.assert_called_once()
-        self.planner._get_simulated_load_lists_after_migrations.assert_not_called()
+        self.planner._get_simulated_load_data_after_migrations.assert_not_called() # Updated mock name
 
         # evaluate_imbalance called by _plan_balancing_migrations, with no overrides
         self.mock_load_evaluator.evaluate_imbalance.assert_called_once_with(
@@ -279,7 +313,7 @@ class TestMigrationPlanner(unittest.TestCase):
 
 
         # Simulation setup for AA part (not the focus here, but needs to run if AA migs exist)
-        self.planner._get_simulated_load_lists_after_migrations = MagicMock(
+        self.planner._get_simulated_load_data_after_migrations = MagicMock( # Updated mock name
             return_value=(self.initial_cpu_p, self.initial_mem_p, self.initial_disk_p, self.initial_net_p, self.initial_host_map)
         )
         # evaluate_imbalance inside _plan_balancing_migrations is part of the mock above for this test.
@@ -299,9 +333,11 @@ class TestMigrationPlanner(unittest.TestCase):
         ]
         self.planner._plan_anti_affinity_migrations = MagicMock(return_value=aa_migs)
         self.planner._plan_balancing_migrations = MagicMock(return_value=[]) # No balancing moves
-        self.planner._get_simulated_load_lists_after_migrations = MagicMock( # Called if aa_migs not empty
+        self.planner._get_simulated_load_data_after_migrations = MagicMock( # Updated mock name, called if aa_migs not empty
              return_value=(self.initial_cpu_p, self.initial_mem_p, self.initial_disk_p, self.initial_net_p, self.initial_host_map)
         )
+        # evaluate_imbalance inside _plan_balancing_migrations might be called if not for empty balancing moves
+        # For this test, the focus is on truncation, so an empty return for evaluate_imbalance from balancing is fine
         self.mock_load_evaluator.evaluate_imbalance = MagicMock(return_value={})
 
 

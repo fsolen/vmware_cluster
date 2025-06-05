@@ -165,6 +165,7 @@ class ConstraintManager:
         for target_host_obj in active_hosts:
             if not hasattr(target_host_obj, 'name'): continue
             target_host_name = target_host_obj.name
+            # Ensure source host is not considered as a target
             if target_host_name == source_host_name:
                 continue
 
@@ -211,6 +212,7 @@ class ConstraintManager:
         for target_host_obj in active_hosts:
             if not hasattr(target_host_obj, 'name'): continue
             target_host_name = target_host_obj.name
+            # Ensure source host is not considered as a target
             if target_host_name == source_host_name:
                 continue
             

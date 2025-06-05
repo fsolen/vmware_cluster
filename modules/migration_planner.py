@@ -19,116 +19,121 @@ class MigrationManager:
         # logger setup will use the global logger from fdrs.py, or a module-level logger
         # self.logger = logger # No need for self.logger if using module-level logger
 
-    def _get_simulated_load_lists_after_migrations(self, initial_host_load_map, migrations_to_simulate):
+    def _get_simulated_load_data_after_migrations(self, migrations_to_simulate):
         """
-        Simulates migrations on a given host load map and returns new percentage lists and a new map.
-        Focuses on CPU and Memory simulation. Disk/Network are passed through if not simulatable.
-        Returns: tuple (sim_cpu_list, sim_mem_list, sim_disk_list, sim_net_list, new_sim_load_map)
+        Simulates migrations and returns new CPU/Memory percentage lists and a new map
+        reflecting these simulated CPU/Memory loads. Disk/Network are passed through from original state.
+        Returns: tuple (sim_cpu_list, sim_mem_list, orig_disk_list, orig_net_list, new_sim_load_map)
         """
-        logger.debug(f"[MigrationPlanner_Sim] Simulating {len(migrations_to_simulate)} migrations on load map.")
+        logger.debug(f"[MigrationPlanner_Sim] Simulating {len(migrations_to_simulate)} migrations to update load data.")
 
-        # Fetch current host metrics (absolute usage and capacity)
-        # And current VM metrics (absolute usage for CPU & Memory)
-        # Assuming self.cluster_state.host_metrics and self.cluster_state.vm_metrics are structured as:
-        # host_metrics: {host_name: {'cpu_usage': abs, 'cpu_capacity': abs, 'memory_usage_abs': abs, 'memory_capacity': abs, ...}}
-        # vm_metrics: {vm_name: {'cpu_usage_abs': abs, 'memory_usage_abs': abs, ...}}
+        current_absolute_host_loads = {}
+        # Use self.cluster_state.hosts as the canonical list of host objects.
+        # Ensure that LoadEvaluator also uses this same list or an equivalent ordered list of names.
+        # For safety, get the canonical order of host names from LoadEvaluator if possible,
+        # or ensure self.cluster_state.hosts is the source of truth for order.
+        # The previous version used self.load_evaluator.hosts.
+        ordered_host_objects = self.cluster_state.hosts # Assuming this list is stable and representative
 
-        # For this simulation, we need a full picture of all hosts' load and capacities,
-        # not just the initial_host_load_map (which is percentages).
-        # We'll construct a temporary structure holding absolute values for simulation.
+        if not ordered_host_objects:
+            logger.warning("[MigrationPlanner_Sim] No hosts in cluster_state.hosts. Cannot simulate load changes.")
+            return [], [], [], [], {}
 
-        simulated_host_abs_metrics = {}
-        # We need the order of hosts as LoadEvaluator expects for its lists
-        ordered_host_names = [h.name for h in self.load_evaluator.hosts if hasattr(h, 'name')] # Relies on LoadEvaluator's host order
+        for host_obj in ordered_host_objects:
+            if not hasattr(host_obj, 'name'):
+                logger.warning(f"[MigrationPlanner_Sim] Host object {host_obj} lacks a name. Skipping for absolute load collection.")
+                continue
+            host_name = host_obj.name
+            host_metrics_from_cs = self.cluster_state.host_metrics.get(host_name, {})
 
-        # Populate initial absolute metrics from cluster_state
-        for hostname in ordered_host_names:
-            host_data = self.cluster_state.host_metrics.get(hostname, {})
-            simulated_host_abs_metrics[hostname] = {
-                'cpu_usage': host_data.get('cpu_usage', 0), # This is sum of VM abs CPU on host
-                'cpu_capacity': host_data.get('cpu_capacity', 1), # Avoid division by zero
-                'memory_usage_abs': host_data.get('memory_usage_abs', 0),
-                'memory_capacity': host_data.get('memory_capacity', 1),
-                # For disk/network, we'll carry over percentages if direct simulation is too complex
-                'disk_io_usage': host_data.get('disk_io_usage', 0),
-                'disk_io_capacity': host_data.get('disk_io_capacity', 1),
-                'network_io_usage': host_data.get('network_io_usage', 0),
-                'network_capacity': host_data.get('network_capacity', 1),
+            current_absolute_host_loads[host_name] = {
+                'cpu_usage_abs': host_metrics_from_cs.get('cpu_usage', 0), # This should be absolute sum from VMs
+                'mem_usage_abs': host_metrics_from_cs.get('memory_usage', 0), # This should be host's overallMemoryUsage
+                'cpu_cap_abs': host_metrics_from_cs.get('cpu_capacity', 1), # Avoid division by zero
+                'mem_cap_abs': host_metrics_from_cs.get('memory_capacity', 1) # Avoid division by zero
             }
+
+        # Deepcopy to prevent modifying the numbers in self.cluster_state.host_metrics if they are mutable objects (e.g. if not just numbers)
+        # For simple numeric values, direct assignment is fine, but deepcopy is safer if structure is complex.
+        # Given current structure looks like numbers, direct use for modification is okay.
+        # simulated_absolute_loads = copy.deepcopy(current_absolute_host_loads) # If values were complex objects
 
         # Simulate each migration
         for mig_plan in migrations_to_simulate:
             vm_obj = mig_plan['vm']
             target_host_obj = mig_plan['target_host']
-            source_host_obj = self.cluster_state.get_host_of_vm(vm_obj) # Get actual source before simulation
+            source_host_obj = self.cluster_state.get_host_of_vm(vm_obj)
+
+            if not hasattr(vm_obj, 'name') or not hasattr(target_host_obj, 'name'):
+                logger.warning(f"[MigrationPlanner_Sim] VM or Target Host in migration plan missing name. Skipping: {mig_plan}")
+                continue
 
             vm_name = vm_obj.name
             target_host_name = target_host_obj.name
-            source_host_name = source_host_obj.name if source_host_obj else None
+            source_host_name = source_host_obj.name if source_host_obj and hasattr(source_host_obj, 'name') else None
 
-            vm_res = self.cluster_state.vm_metrics.get(vm_name, {})
-            vm_cpu_abs = vm_res.get('cpu_usage_abs', 0)
-            vm_mem_abs = vm_res.get('memory_usage_abs', 0)
-            # VM disk/network contributions are not typically detailed enough for this simulation
+            vm_res_metrics = self.cluster_state.vm_metrics.get(vm_name, {})
+            vm_cpu_abs = vm_res_metrics.get('cpu_usage_abs', 0)
+            vm_mem_abs = vm_res_metrics.get('memory_usage_abs', 0)
 
-            if source_host_name and source_host_name in simulated_host_abs_metrics:
-                simulated_host_abs_metrics[source_host_name]['cpu_usage'] -= vm_cpu_abs
-                simulated_host_abs_metrics[source_host_name]['memory_usage_abs'] -= vm_mem_abs
+            if source_host_name and source_host_name in current_absolute_host_loads:
+                current_absolute_host_loads[source_host_name]['cpu_usage_abs'] -= vm_cpu_abs
+                current_absolute_host_loads[source_host_name]['mem_usage_abs'] -= vm_mem_abs
+            elif source_host_name:
+                logger.warning(f"[MigrationPlanner_Sim] Source host {source_host_name} for VM {vm_name} not in current_absolute_host_loads. Load not decremented.")
 
-            if target_host_name in simulated_host_abs_metrics:
-                simulated_host_abs_metrics[target_host_name]['cpu_usage'] += vm_cpu_abs
-                simulated_host_abs_metrics[target_host_name]['memory_usage_abs'] += vm_mem_abs
+            if target_host_name in current_absolute_host_loads:
+                current_absolute_host_loads[target_host_name]['cpu_usage_abs'] += vm_cpu_abs
+                current_absolute_host_loads[target_host_name]['mem_usage_abs'] += vm_mem_abs
             else:
-                logger.warning(f"[MigrationPlanner_Sim] Target host {target_host_name} not in simulated metrics. VM {vm_name} load not added.")
+                # This was the warning we want to avoid. If current_absolute_host_loads is built from *all* hosts,
+                # and target_host_obj is a valid host from the cluster, its name should be a key.
+                logger.error(f"[MigrationPlanner_Sim] Target host {target_host_name} for VM {vm_name} not in current_absolute_host_loads. Load not incremented. This indicates an issue with host lists.")
 
-        # Recalculate percentage lists and the new simulated map based on ordered_host_names
-        sim_cpu_list, sim_mem_list, sim_disk_list, sim_net_list = [], [], [], []
-        new_sim_load_map = {}
+        # Generate new CPU/Memory percentage lists and the simulated map
+        sim_cpu_percentages = []
+        sim_mem_percentages = []
+        sim_host_resource_percentages_map = {}
 
-        # Get original disk/net lists if we are not simulating them due to lack of per-VM data
-        # These would come from the initial state before AA migrations.
-        # The initial_host_load_map passed in represents the state *before* migrations_to_simulate.
+        # Fetch original Disk/Network I/O percentage lists to pass them through
+        # These are fetched once, representing the state before these simulated migrations for these resources.
+        _ , _, orig_disk_percentages, orig_net_percentages = self.load_evaluator.get_resource_percentage_lists()
 
-        # We need the original percentage lists for disk/network to pass through if not simulating.
-        # This implies initial_host_load_map should be convertible back or we make another call.
-        # For simplicity, let's assume initial_host_load_map provides enough to reconstruct these,
-        # or better, get original lists from load_evaluator before simulation.
+        # Iterate based on the order from LoadEvaluator.hosts to ensure list consistency.
+        # This assumes LoadEvaluator.hosts provides a list of host objects/dicts with 'name'.
+        # If LoadEvaluator.hosts is just names, we need to adapt.
+        # From previous steps, LoadEvaluator takes host data which includes names.
 
-        # Fallback: if initial_host_load_map is passed, derive disk/net from it.
-        # This assumes initial_host_load_map is ordered like ordered_host_names.
-        # This is getting complicated. Simpler: _get_simulated_load_lists_after_migrations
-        # should fetch original lists for disk/net if it cannot simulate them.
+        # Use self.cluster_state.hosts for iteration order, assuming LoadEvaluator uses a compatible order.
+        # Best practice would be to use the exact same host list object if possible, or a consistently ordered list of names.
+        host_names_from_evaluator = [h.get('name') for h in self.load_evaluator.hosts if isinstance(h, dict) and h.get('name')]
+        if not host_names_from_evaluator and ordered_host_objects: # Fallback if load_evaluator.hosts is not structured as list of dicts with names
+             host_names_from_evaluator = [h.name for h in ordered_host_objects if hasattr(h, 'name')]
 
-        _orig_cpu_p, _orig_mem_p, _orig_disk_p, _orig_net_p = self.load_evaluator.get_resource_percentage_lists()
 
+        for i, host_name in enumerate(host_names_from_evaluator):
+            sim_loads = current_absolute_host_loads.get(host_name)
+            if not sim_loads:
+                logger.warning(f"[MigrationPlanner_Sim] Host {host_name} from LoadEvaluator's order not found in simulated loads. Using zeros.")
+                cpu_p, mem_p = 0.0, 0.0
+            else:
+                cpu_p = (sim_loads['cpu_usage_abs'] / sim_loads['cpu_cap_abs'] * 100.0) if sim_loads['cpu_cap_abs'] > 0 else 0
+                mem_p = (sim_loads['mem_usage_abs'] / sim_loads['mem_cap_abs'] * 100.0) if sim_loads['mem_cap_abs'] > 0 else 0
 
-        for hostname in ordered_host_names:
-            metrics = simulated_host_abs_metrics.get(hostname, {})
+            sim_cpu_percentages.append(cpu_p)
+            sim_mem_percentages.append(mem_p)
 
-            cpu_p = (metrics.get('cpu_usage',0) / metrics.get('cpu_capacity',1) * 100.0) if metrics.get('cpu_capacity',1) > 0 else 0
-            mem_p = (metrics.get('memory_usage_abs',0) / metrics.get('memory_capacity',1) * 100.0) if metrics.get('memory_capacity',1) > 0 else 0
+            # Disk and Network percentages are passed through from original
+            disk_p = orig_disk_percentages[i] if i < len(orig_disk_percentages) else 0
+            net_p = orig_net_percentages[i] if i < len(orig_net_percentages) else 0
 
-            sim_cpu_list.append(cpu_p)
-            sim_mem_list.append(mem_p)
+            sim_host_resource_percentages_map[host_name] = {
+                'cpu': cpu_p, 'memory': mem_p,
+                'disk': disk_p, 'network': net_p
+            }
 
-            # For Disk/Network, use original values if per-VM data for simulation is missing
-            # Find index of hostname in ordered_host_names to get correct original percentage
-            try:
-                h_idx = ordered_host_names.index(hostname)
-                disk_p = _orig_disk_p[h_idx] if h_idx < len(_orig_disk_p) else 0
-                net_p  = _orig_net_p[h_idx] if h_idx < len(_orig_net_p) else 0
-            except ValueError: # Should not happen if ordered_host_names is from self.load_evaluator.hosts
-                disk_p = 0
-                net_p = 0
-                logger.error(f"Hostname {hostname} not found in load evaluator's ordered list during simulation pass-through.")
-
-            sim_disk_list.append(disk_p) # Pass through original disk if not simulated
-            sim_net_list.append(net_p)   # Pass through original net if not simulated
-
-            new_sim_load_map[hostname] = {'cpu': cpu_p, 'memory': mem_p, 'disk': disk_p, 'network': net_p}
-
-        logger.debug(f"[MigrationPlanner_Sim] Simulation complete. New load map: {new_sim_load_map}")
-        return sim_cpu_list, sim_mem_list, sim_disk_list, sim_net_list, new_sim_load_map
+        logger.debug(f"[MigrationPlanner_Sim] Simulation complete. New load map: {sim_host_resource_percentages_map}")
+        return sim_cpu_percentages, sim_mem_percentages, orig_disk_percentages, orig_net_percentages, sim_host_resource_percentages_map
 
     def _is_anti_affinity_safe(self, vm_to_move, target_host_obj, planned_migrations_in_cycle=None):
         logger.debug(f"[MigrationPlanner] Checking anti-affinity safety for VM '{vm_to_move.name}' to host '{target_host_obj.name}'. Planned migrations in cycle: {planned_migrations_in_cycle}")
@@ -371,10 +376,8 @@ class MigrationManager:
 
         if anti_affinity_migrations:
             logger.info("[MigrationPlanner] Simulating anti-affinity migrations to re-evaluate load balance...")
-            # Pass initial_host_resource_percentages_map for context if needed by simulation,
-            # though current _get_simulated_load_lists_after_migrations re-fetches.
             sim_cpu_p_override, sim_mem_p_override, sim_disk_p_override, sim_net_p_override, simulated_load_map_after_aa = \
-                self._get_simulated_load_lists_after_migrations(initial_host_resource_percentages_map, anti_affinity_migrations)
+                self._get_simulated_load_data_after_migrations(anti_affinity_migrations) # Removed initial_host_load_map from call
             current_host_resource_percentages_map = simulated_load_map_after_aa
             logger.info("[MigrationPlanner] Load balance re-evaluation will use simulated state after AA migrations.")
         else:

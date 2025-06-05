@@ -291,8 +291,9 @@ class ClusterState:
         # VM distribution analysis
         logger.info("\n--- VM Resource Consumption ---")
         for vm_name, metrics in self.vm_metrics.items():
-            host_name = self.get_host_of_vm(metrics['vm_obj'])
-            logger.info(f"\nVM: {vm_name} (on {host_name})")
+            host_obj = self.get_host_of_vm(metrics['vm_obj']) # Renamed to host_obj for clarity
+            host_display_name = host_obj.name if host_obj and hasattr(host_obj, 'name') else 'Unknown'
+            logger.info(f"\nVM: {vm_name} (on {host_display_name})")
             logger.info(f"├─ CPU: {metrics.get('cpu_usage_abs', 0)} MHz")
             logger.info(f"├─ Memory: {metrics.get('memory_usage_abs', 0)} MB")
             logger.info(f"├─ Disk I/O: {metrics.get('disk_io_usage_abs', 0):.1f} MBps")
