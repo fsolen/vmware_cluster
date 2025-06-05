@@ -335,12 +335,9 @@ class ClusterState:
     def update_metrics(self, resource_monitor=None):
         """Update VM and Host metrics"""
         if resource_monitor is None:
-            # This import and instantiation should be handled by the caller (fdrs.py)
-            # However, to prevent breaking if called without one, we can keep it but log a warning.
-            # For now, fixing the immediate bug of self.cluster vs self.service_instance
             from .resource_monitor import ResourceMonitor # Keep local import for safety
             logger.warning("ResourceMonitor not provided to update_metrics, creating a new instance. This is not recommended for production.")
-            resource_monitor = ResourceMonitor(self.service_instance) # Corrected: self.service_instance
+            resource_monitor = ResourceMonitor(self.service_instance) 
 
         logger.info("Updating cluster metrics...")
         self.annotate_vms_with_metrics(resource_monitor)
