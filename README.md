@@ -23,23 +23,23 @@ FDRS (Fully Dynamic Resource Scheduler) is a Python-based tool designed to autom
         - Level 3 (Default): Max 15% difference
         - Level 2: Max 20% difference
         - Level 1: Max 25% difference
-- **Anti-Affinity Rules**:
+- **Smart Anti-Affinity Rules**:
     - Automatically distributes VMs based on their names to improve resilience and performance.
-    - VMs with the same name prefix (e.g., "webserver" derived from "webserver01", "webserver02", "webserver03") are considered part of an anti-affinity group.
+    - VMs with the same name prefix (e.g., "webserver" derived from "webserver01", "webserver02" or "webserver123") are considered part of an anti-affinity group.
     - The rule ensures that the number of these sibling VMs on any single host does not differ by more than 1 from the count on any other host in the cluster.
 - **Cron Support**: The CLI tool can be scheduled with cron jobs for automated execution.
-- **Support for VMware vSphere**: Designed to work seamlessly with VMware vSphere standard clusters (DRS optional but not required for FDRS functionality).
+- **Support for VMware vSphere**: Designed to work seamlessly with VMware vSphere Standard licensed clusters (DRS not required for FDRS functionality).
 - **Dry-Run Mode**: Allows users to preview planned migrations without executing them, ensuring safety and control.
-
+- **Max Migration**: Allow to control migration count per run by the `--max-migrations` flag (Default: 20 )
 ---
 
 ### Key Concepts
 
 - **Workflow Priority**: FDRS processes rules in a specific order.
     1.  **Anti-Affinity First**: It first evaluates and plans migrations to satisfy anti-affinity rules.
-    2.  **Resource Balancing**: After anti-affinity considerations, it evaluates the cluster for resource imbalances (CPU, Memory, Disk I/O, Network I/O) and plans further migrations if necessary.
-- **VM Grouping (Anti-Affinity)**: For anti-affinity, VMs are grouped based on their name prefix. The prefix is determined by removing the last two characters of the VM name. For example, `myvm01`, `myvm02`, and `myvmAB` would all belong to the `myvm` group.
-- **Balancing Mechanism (Resource Balancing)**: Resource balancing aims to ensure that for any given metric (CPU, Memory, Disk I/O, Network I/O), the difference in utilization percentage between the most loaded host and the least loaded host does not exceed the threshold defined by the chosen aggressiveness level.
+    2.  **Resource Balancing**: After anti-affinity considerations, it evaluates the cluster for resource imbalances (CPU, Memory, Disk I/O, Network Throughput) and plans further migrations if necessary.
+- **VM Grouping (Anti-Affinity)**: For anti-affinity, VMs are grouped based on their name prefix. The prefix is determined by removing the last numerical characters of the VM name.
+- **Balancing Mechanism (Resource Balancing)**: Resource balancing aims to ensure that for any given metric (CPU, Memory, Disk I/O, Network Throughput), the difference in utilization percentage between the most loaded host and the least loaded host does not exceed the threshold defined by the chosen aggressiveness level.
 
 ---
 
@@ -47,8 +47,8 @@ FDRS (Fully Dynamic Resource Scheduler) is a Python-based tool designed to autom
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/fsolen/vmware_cluster.git
-    cd vmware_cluster
+    git clone https://github.com/fsolen/vsphere_scheduler.git
+    cd vsphere_scheduler
     ```
 2.  Ensure you have Python installed (Python 3.7+ is recommended).
 3.  Install the required dependencies:
@@ -75,7 +75,7 @@ python fdrs.py --vcenter <vc_ip_or_hostname> --username <user> --password <pass>
 Focuses only on balancing specified metrics (CPU and Memory in this example) with a specific aggressiveness level (Level 4: Max 10% difference). Anti-affinity rules are not specifically enforced in this mode beyond what `MigrationManager` might consider for placement safety if it were extended to do so.
 
 ```bash
-python fdrs.py --vcenter <vc_ip_or_hostname> --username <user> --password <pass> --balance --metrics cpu,memory --aggressiveness 4
+python fdrs.py --vcenter <vc_ip_or_hostname> --username <user> --password <pass> --balance --metrics cpu,memory --aggressiveness 4 --max-migrations 50
 ```
 
 ### Apply Anti-Affinity Rules Only
@@ -116,7 +116,3 @@ python fdrs.py --help
 
 *   FDSS (Fully Dynamic Storage Scheduler): Potential future development for storage-specific dynamic scheduling.
 *   Enhanced vSphere API Integration: Exploring deeper integration with VMware APIs for more advanced features and metrics.
-*   Configurable Anti-Affinity Suffix Length: Allow users to define how many characters to ignore for VM name prefix grouping.
-
-=======
-Use with caution.
