@@ -35,14 +35,14 @@ class ConnectionManager:
             )
 
             if not self.service_instance:
-                logger.error("Failed to connect to vCenter!")
+                logger.error(f"[ConnectionManager] Failed to connect to vCenter!")
                 raise Exception("Service instance is None")
 
-            logger.info("Successfully connected to vCenter!")
+            logger.info(f"[ConnectionManager] Successfully connected to vCenter!")
             return self.service_instance
 
         except Exception as e:
-            logger.error(f"vCenter connection error: {e}")
+            logger.error(f"[ConnectionManager] vCenter connection error: {e}")
             raise
 
     def disconnect(self):
@@ -52,7 +52,7 @@ class ConnectionManager:
         try:
             if self.service_instance:
                 connect.Disconnect(self.service_instance)
-                logger.info("Disconnected from vCenter cleanly.")
+                logger.info(f"[ConnectionManager] Disconnected from vCenter cleanly.")
         except Exception as e:
-            logger.error(f"Error during disconnection: {e}")
+            logger.error(f"[ConnectionManager] Error during disconnection: {e}")
 
