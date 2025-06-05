@@ -270,8 +270,29 @@ class ClusterState:
         
         # Log overall cluster state
         logger.info("\n=== Cluster State Summary ===")
+        # Attempt to get vCenter name
+        vcenter_name = "N/A" # Default
+        try:
+            if self.service_instance and self.service_instance.content and self.service_instance.content.about:
+                vcenter_name = self.service_instance.content.about.name
+            if not vcenter_name and self.service_instance and self.service_instance._stub: # Fallback
+                 vcenter_name = self.service_instance._stub.host
+        except Exception as e:
+            logger.debug(f"Could not retrieve vCenter name: {e}")
+            if self.service_instance and self.service_instance._stub: # Fallback in case of exception with .about.name
+                 vcenter_name = self.service_instance._stub.host
+            else:
+                vcenter_name = "N/A"
+
+
+        header = f"{'Cluster/vCenter':<30} {'Hostname':<25} {'CPU %':<10} {'Mem %':<10} {'Storage I/O (MBps)':<20} {'Net Throughput (MBps)':<25} {'VM Count':<10}"
+        logger.info(header)
+        logger.info("-" * len(header))
+
+        for host_name, metrics in self.host_metrics.items():
+            logger.info(f"{vcenter_name:<30} {host_name:<25} {metrics.get('cpu_usage_pct', 0):<10.1f} {metrics.get('memory_usage_pct', 0):<10.1f} {metrics.get('disk_io_usage', 0):<20.1f} {metrics.get('network_io_usage', 0):<25.1f} {len(metrics.get('vms', [])):<10}")
         
-        # Host-level statistics
+        # Host-level statistics (this section title will now follow the summary table)
         logger.info("\n--- Host Resource Distribution ---")
         for host_name, metrics in self.host_metrics.items():
             total_cpu_capacity += metrics['cpu_capacity']

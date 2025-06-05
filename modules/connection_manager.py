@@ -1,9 +1,9 @@
 from pyVim import connect
 from pyVmomi import vim
 import ssl
-from modules.logger import Logger
+import logging
 
-logger = Logger()
+logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     """
