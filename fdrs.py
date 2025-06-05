@@ -32,23 +32,16 @@ def parse_args():
     parser.add_argument("--balance", action="store_true", help="Auto-balance the cluster based on selected metrics")
     parser.add_argument("--metrics", type=str, default="cpu,memory,disk,network", help="Comma-separated list of metrics to balance: cpu,memory,disk,network")
     parser.add_argument("--apply-anti-affinity", action="store_true", help="Apply anti-affinity rules only")
-    parser.add_argument(
-        "--max-migrations",
-        type=int,
-        default=None, # Let MigrationManager handle its own default if not specified
-        help="Maximum total migrations to perform in a single run (default: MigrationManager's internal default)"
+    parser.add_argument("--max-migrations",type=int,default=None, help="Maximum total migrations to perform in a single run (default: MigrationManager's internal default)"
     )
 
     return parser.parse_args()
 
 def main():
     print_banner()
-
     args = parse_args()
-
-    # Configure standard Python logging
     logging.basicConfig(
-        level=logging.INFO, # Set to DEBUG to capture all levels from modules
+        level=logging.INFO,
         format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[logging.StreamHandler(sys.stdout)] # Ensure output to console
