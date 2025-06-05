@@ -49,7 +49,7 @@ def main():
     logging.getLogger('fdrs').setLevel(logging.INFO)
     # The module-level logger 'logger' will now use this basicConfig.
 
-    logger.info("Starting FDRS...")
+    logger.info(f"[MAIN]Starting FDRS...")
     connection_manager = ConnectionManager(args.vcenter, args.username, args.password)
     service_instance = connection_manager.connect()
 
