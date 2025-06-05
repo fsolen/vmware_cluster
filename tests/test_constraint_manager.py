@@ -151,14 +151,16 @@ class TestConstraintManager(unittest.TestCase):
         mock_find_perfect.return_value = None # No perfect balance host
         mock_find_better.return_value = self.host3 # Better host found by second helper
 
-        result_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move)
+        # Pass planned_migrations_this_cycle=None for existing test
+        result_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move, planned_migrations_this_cycle=None)
         mock_find_perfect.assert_called_once()
         mock_find_better.assert_called_once()
         self.assertEqual(result_host, self.host3)
 
     def test_get_preferred_host_for_vm_initial_checks_vm_invalid(self):
         invalid_vm = MockVM(name="v") # Name too short
-        self.assertIsNone(self.constraint_manager.get_preferred_host_for_vm(invalid_vm))
+        # Pass planned_migrations_this_cycle=None for existing test
+        self.assertIsNone(self.constraint_manager.get_preferred_host_for_vm(invalid_vm, planned_migrations_this_cycle=None))
 
         # VM with no name attribute (more tricky to mock with simple class)
         # For now, assume hasattr check handles it.
@@ -237,7 +239,8 @@ class TestConstraintManager(unittest.TestCase):
 
 
         # Call the method under test
-        preferred_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move)
+        # Pass planned_migrations_this_cycle=None for existing test
+        preferred_host = self.constraint_manager.get_preferred_host_for_vm(vm_to_move, planned_migrations_this_cycle=None)
 
         # Assertion: The preferred host should be target_host, not source_host.
         # If target_host is the only valid option, it should be chosen.
@@ -247,6 +250,77 @@ class TestConstraintManager(unittest.TestCase):
                          "Preferred host should be the targetHost, not the sourceHost.")
         self.assertNotEqual(preferred_host.name, source_host.name,
                             "Preferred host must not be the source host.")
+
+    def test_get_preferred_host_for_vm_considers_planned_cycle_migrations(self):
+        """
+        Test that get_preferred_host_for_vm correctly considers planned migrations
+        from the current cycle to adjust host group counts.
+        """
+        # Setup: Group "testvm" with vm_to_process, vm_already_moving
+        vm_to_process = MockVM(name="testvm01")
+        vm_already_moving = MockVM(name="testvm02")
+
+        hostA = MockHost(name="hostA")
+        hostB = MockHost(name="hostB")
+        hostC = MockHost(name="hostC")
+
+        # Initial state: vm_to_process and vm_already_moving are on hostA
+        vm_to_process.host = hostA
+        vm_already_moving.host = hostA
+
+        self.mock_cluster_state.hosts = [hostA, hostB, hostC]
+
+        # Mock get_host_of_vm to reflect initial state for count calculation
+        # AND current state for the vm_to_process's source_host_obj
+        def get_host_side_effect(vm_obj):
+            if vm_obj == vm_to_process: return hostA
+            if vm_obj == vm_already_moving: return hostA # Its original host for base count calculation
+            return None
+        self.mock_cluster_state.get_host_of_vm = MagicMock(side_effect=get_host_side_effect)
+
+        self.constraint_manager.vm_distribution = {
+            "testvm": [vm_to_process, vm_already_moving]
+        }
+        self.mock_cluster_state.vms = [vm_to_process, vm_already_moving] # For enforce_anti_affinity if called
+
+        # Planned migration for vm_already_moving: from hostA to hostB
+        planned_migrations = [{'vm': vm_already_moving, 'target_host': hostB}]
+
+        # Expected base_host_group_counts (before considering planned_migrations):
+        # hostA: 2 (vm_to_process, vm_already_moving)
+        # hostB: 0
+        # hostC: 0
+
+        # Expected adjusted_host_group_counts (after vm_already_moving is planned to hostB):
+        # hostA: 1 (vm_to_process remains)
+        # hostB: 1 (vm_already_moving moves here)
+        # hostC: 0
+
+        # Now, we are looking for a host for vm_to_process (currently on hostA).
+        # Source host for vm_to_process is hostA. Adjusted count on hostA is 1.
+        # Potential targets (excluding sourceHost=hostA): hostB, hostC.
+        # Counts for these targets: hostB=1, hostC=0.
+
+        # _find_perfect_balance_host:
+        #   If vm_to_process moves from hostA (becomes 0) to hostB (becomes 2): counts (A:0, B:2, C:0). Diff=2. No.
+        #   If vm_to_process moves from hostA (becomes 0) to hostC (becomes 1): counts (A:0, B:1, C:1). Diff=1. Yes! hostC is a perfect balance candidate.
+
+        # _find_better_than_source_host:
+        #   Adjusted source (hostA) count for vm_to_process's group is 1.
+        #   Target hostB count = 1. Not less than source.
+        #   Target hostC count = 0. Less than source. hostC is a better candidate.
+
+        # So, hostC should be chosen.
+
+        # We don't need to mock the helper methods themselves, but let the main logic run.
+        preferred_host = self.constraint_manager.get_preferred_host_for_vm(
+            vm_to_process,
+            planned_migrations_this_cycle=planned_migrations
+        )
+
+        self.assertIsNotNone(preferred_host, "A preferred host should be found.")
+        self.assertEqual(preferred_host.name, "hostC",
+                         "hostC should be chosen as it becomes the best option after considering planned migrations.")
 
 
 if __name__ == '__main__':

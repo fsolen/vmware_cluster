@@ -181,6 +181,83 @@ class TestMigrationPlanner(unittest.TestCase):
         self.assertEqual(sim_map.get("host2"), {'cpu': 10.0, 'memory': 12.5, 'disk': self.initial_disk_p[1], 'network': self.initial_net_p[1]})
         self.assertEqual(sim_map.get("host3"), {'cpu': 20.0, 'memory': 31.25, 'disk': self.initial_disk_p[2], 'network': self.initial_net_p[2]})
 
+    def test_plan_anti_affinity_migrations_iterative_calls(self):
+        """
+        Test _plan_anti_affinity_migrations to ensure it iteratively calls
+        get_preferred_host_for_vm with accumulated planned migrations.
+        """
+        # VMs from the same anti-affinity group "aaVM"
+        vm_aa1 = MockVM(name="aaVM01", host=self.host1)
+        vm_aa1.config = MagicMock(template=False) # Ensure not treated as template
+        vm_aa2 = MockVM(name="aaVM02", host=self.host1) # Also on host1, causing violation
+        vm_aa2.config = MagicMock(template=False) # Ensure not treated as template
+        vm_aa3 = MockVM(name="aaVM03", host=self.host2) # On host2, for balancing counts
+        vm_aa3.config = MagicMock(template=False)
+
+
+        # Mock constraint_manager setup
+        self.mock_constraint_mgr.violations = [vm_aa1, vm_aa2] # Two VMs from same group need moving
+        # Ensure vm_distribution is populated if enforce_anti_affinity is called
+        self.mock_constraint_mgr.vm_distribution = {
+            "aaVM": [vm_aa1, vm_aa2, vm_aa3]
+        }
+        # Ensure that if calculate_anti_affinity_violations is called, it returns the violations we want for the test.
+        # And also set the .violations attribute directly in case the method attempts to use a pre-calculated one.
+        self.mock_constraint_mgr.violations = [vm_aa1, vm_aa2]
+        self.mock_constraint_mgr.calculate_anti_affinity_violations.return_value = [vm_aa1, vm_aa2]
+
+        # Mock get_preferred_host_for_vm:
+        # 1st call (for vm_aa1): return host2, no prior planned migrations
+        # 2nd call (for vm_aa2): return host3, expect vm_aa1's move to host2 in planned_migrations
+
+        # Define side effect function for get_preferred_host_for_vm
+        def get_preferred_host_side_effect(vm_obj, planned_migrations_this_cycle=None):
+            if vm_obj == vm_aa1:
+                # For vm_aa1, no migrations should be planned yet in this cycle
+                self.assertEqual(len(planned_migrations_this_cycle or []), 0)
+                return self.host2 # Plan to move vm_aa1 to host2
+            elif vm_obj == vm_aa2:
+                # For vm_aa2, vm_aa1's migration to host2 should be in planned_migrations_this_cycle
+                self.assertIsNotNone(planned_migrations_this_cycle)
+                self.assertEqual(len(planned_migrations_this_cycle), 1)
+                self.assertEqual(planned_migrations_this_cycle[0]['vm'], vm_aa1)
+                self.assertEqual(planned_migrations_this_cycle[0]['target_host'], self.host2)
+                return self.host3 # Plan to move vm_aa2 to host3
+            # Adding a fail condition to see if it's called with unexpected VMs or None is returned implicitly
+            self.fail(f"get_preferred_host_side_effect called with unexpected vm_obj: {getattr(vm_obj, 'name', 'UnknownVM')}")
+            return None # Should not be reached
+
+        self.mock_constraint_mgr.get_preferred_host_for_vm.side_effect = get_preferred_host_side_effect
+
+        # Mock _would_fit_on_host to always return True for simplicity
+        self.planner._would_fit_on_host = MagicMock(return_value=True)
+
+        # Mock cluster_state.get_host_of_vm for current host info
+        self.mock_cluster_state.get_host_of_vm.side_effect = lambda vm: vm.host
+
+        vms_already_in_overall_plan = set()
+        planned_aa_migrations = self.planner._plan_anti_affinity_migrations(vms_already_in_overall_plan)
+
+        self.assertEqual(len(planned_aa_migrations), 2)
+        self.assertEqual(planned_aa_migrations[0]['vm'], vm_aa1)
+        self.assertEqual(planned_aa_migrations[0]['target_host'], self.host2)
+        self.assertEqual(planned_aa_migrations[1]['vm'], vm_aa2)
+        self.assertEqual(planned_aa_migrations[1]['target_host'], self.host3)
+
+        self.assertEqual(self.mock_constraint_mgr.get_preferred_host_for_vm.call_count, 2)
+        # The assertions for the content of planned_migrations_this_cycle are done
+        # inside the get_preferred_host_side_effect.
+        # assert_has_calls will see the *final* state of mutable arguments if not careful.
+        # We can use ANY here for planned_migrations_this_cycle as its state at call time
+        # is verified by the side_effect.
+        expected_calls = [
+            call(vm_aa1, planned_migrations_this_cycle=unittest.mock.ANY),
+            call(vm_aa2, planned_migrations_this_cycle=unittest.mock.ANY)
+        ]
+        self.mock_constraint_mgr.get_preferred_host_for_vm.assert_has_calls(expected_calls, any_order=False)
+        self.assertIn(vm_aa1.name, vms_already_in_overall_plan)
+        self.assertIn(vm_aa2.name, vms_already_in_overall_plan)
+
 
     @patch('modules.migration_planner.MigrationManager._get_simulated_load_data_after_migrations') # Updated patch name
     def test_plan_migrations_iterative_path_with_aa_moves(

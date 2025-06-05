@@ -93,11 +93,12 @@ class ConstraintManager:
         logger.info(f"[ConstraintManager] Total unique anti-affinity violations found: {len(unique_violations)}")
         return unique_violations
 
-    def get_preferred_host_for_vm(self, vm_to_move):
+    def get_preferred_host_for_vm(self, vm_to_move, planned_migrations_this_cycle=None):
         '''
-        Suggests a preferred host for 'vm_to_move' to resolve an anti-affinity violation.
+        Suggests a preferred host for 'vm_to_move' to resolve an anti-affinity violation,
+        considering other migrations already planned in the current cycle.
         '''
-        logger.debug(f"[ConstraintManager] Getting preferred host for VM '{vm_to_move.name}'")
+        logger.debug(f"[ConstraintManager] Getting preferred host for VM '{vm_to_move.name}', considering {len(planned_migrations_this_cycle or [])} planned migrations.")
         
         if not hasattr(vm_to_move, 'name') or len(vm_to_move.name) < 3:
             logger.warning(f"[ConstraintManager] Invalid vm_to_move object: {vm_to_move}")
@@ -129,24 +130,76 @@ class ConstraintManager:
 
         best_target_host_obj = None
         
-        current_host_group_counts = {host.name: 0 for host in active_hosts if hasattr(host, 'name')}
-        for vm_in_group_iter in vms_in_group: # Renamed from vm_in_group_iter_pre_calc
-            h_iter = self.cluster_state.get_host_of_vm(vm_in_group_iter) # Renamed from h_iter_pre_calc
-            if h_iter and hasattr(h_iter, 'name') and h_iter.name in current_host_group_counts:
-                current_host_group_counts[h_iter.name] += 1
+        # Calculate initial host group counts based on current actual state
+        base_host_group_counts = {host.name: 0 for host in active_hosts if hasattr(host, 'name')}
+        for vm_in_group_iter in vms_in_group:
+            h_iter = self.cluster_state.get_host_of_vm(vm_in_group_iter)
+            if h_iter and hasattr(h_iter, 'name') and h_iter.name in base_host_group_counts:
+                base_host_group_counts[h_iter.name] += 1
 
+        logger.debug(f"[ConstraintManager] Base host group counts for prefix '{vm_prefix}': {base_host_group_counts}")
+
+        # Adjust counts based on migrations already planned in this cycle for this group
+        adjusted_host_group_counts = base_host_group_counts.copy()
+        if planned_migrations_this_cycle:
+            logger.debug(f"[ConstraintManager] Adjusting counts for '{vm_prefix}' based on {len(planned_migrations_this_cycle)} planned migrations.")
+            for plan in planned_migrations_this_cycle:
+                planned_vm_obj = plan['vm']
+                if not hasattr(planned_vm_obj, 'name'): continue # Should not happen with valid plans
+
+                # Check if the VM in the plan belongs to the current vm_prefix group
+                planned_vm_prefix = planned_vm_obj.name[:-2]
+
+                if planned_vm_prefix == vm_prefix: # Only adjust for the current VM's group
+                    # Get the original host of the VM that's part of another plan in this cycle.
+                    # This needs to be the host *before* that other plan was made.
+                    # This implies get_host_of_vm should reflect the "original" state for VMs in planned_migrations_this_cycle.
+                    # This is tricky if cluster_state is mutable and reflects ongoing changes.
+                    # For now, assume get_host_of_vm returns the host *before* this current planning cycle began,
+                    # or that the plan dict contains original_host_name.
+                    # The current `plan` dict structure is {'vm': vm_obj, 'target_host': target_host_obj, 'reason': ...}
+                    # It does not store original host. We must fetch it.
+                    original_host_of_planned_vm = self.cluster_state.get_host_of_vm(planned_vm_obj) # This gets current actual host
+
+                    if original_host_of_planned_vm and hasattr(original_host_of_planned_vm, 'name') and \
+                       original_host_of_planned_vm.name in adjusted_host_group_counts:
+                        logger.debug(f"[ConstraintManager] Adjusting for planned move of {planned_vm_obj.name}: "
+                                     f"decrementing {original_host_of_planned_vm.name}")
+                        adjusted_host_group_counts[original_host_of_planned_vm.name] -= 1
+
+                    target_host_of_planned_vm_name = plan['target_host'].name
+                    if target_host_of_planned_vm_name in adjusted_host_group_counts:
+                        logger.debug(f"[ConstraintManager] Adjusting for planned move of {planned_vm_obj.name}: "
+                                     f"incrementing {target_host_of_planned_vm_name}")
+                        adjusted_host_group_counts[target_host_of_planned_vm_name] += 1
+
+                    # Ensure counts don't go negative if data is imperfect or multiple VMs from same host move out
+                    if original_host_of_planned_vm and hasattr(original_host_of_planned_vm, 'name') and \
+                       adjusted_host_group_counts.get(original_host_of_planned_vm.name, 0) < 0:
+                        logger.warning(f"[ConstraintManager] Corrected negative count for host "
+                                       f"{original_host_of_planned_vm.name} to 0 after adjustment.")
+                        adjusted_host_group_counts[original_host_of_planned_vm.name] = 0
+            logger.debug(f"[ConstraintManager] Adjusted host group counts for prefix '{vm_prefix}': {adjusted_host_group_counts}")
+
+        # Now use adjusted_host_group_counts for decisions
         # Try to find a host that achieves perfect balance
-        logger.info(f"[ConstraintManager] Attempting to find a 'perfect balance' host for VM '{vm_to_move.name}'.")
-        best_target_host_obj = self._find_perfect_balance_host(vm_to_move, current_host_group_counts, source_host_name, active_hosts)
+        logger.info(f"[ConstraintManager] Attempting to find a 'perfect balance' host for VM '{vm_to_move.name}' using adjusted counts.")
+        best_target_host_obj = self._find_perfect_balance_host(vm_to_move, adjusted_host_group_counts, source_host_name, active_hosts)
 
         if best_target_host_obj:
             logger.info(f"[ConstraintManager] Found 'perfect balance' host '{best_target_host_obj.name}' for VM '{vm_to_move.name}'.")
             return best_target_host_obj
 
         # If no perfect balance host, try to find a host that is better than the source
-        logger.info(f"[ConstraintManager] No 'perfect balance' host found for VM '{vm_to_move.name}'. Attempting to find a 'better than source' host.")
-        source_host_group_count = current_host_group_counts.get(source_host_name, float('inf'))
-        best_target_host_obj = self._find_better_than_source_host(vm_to_move, current_host_group_counts, source_host_name, source_host_group_count, active_hosts)
+        logger.info(f"[ConstraintManager] No 'perfect balance' host found for VM '{vm_to_move.name}'. Attempting to find a 'better than source' host using adjusted counts.")
+        # source_host_group_count should also be from the adjusted counts for fair comparison
+        adjusted_source_host_group_count = adjusted_host_group_counts.get(source_host_name, 0)
+        logger.debug(f"[ConstraintManager] Adjusted source host count for {source_host_name} (prefix {vm_prefix}) is {adjusted_source_host_group_count}.")
+
+        best_target_host_obj = self._find_better_than_source_host(
+            vm_to_move, adjusted_host_group_counts, source_host_name,
+            adjusted_source_host_group_count, active_hosts
+        )
 
         if best_target_host_obj:
             logger.info(f"[ConstraintManager] Found 'better than source' host '{best_target_host_obj.name}' for VM '{vm_to_move.name}'.")

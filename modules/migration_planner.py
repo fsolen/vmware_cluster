@@ -440,7 +440,8 @@ class MigrationManager:
         Returns a list of migration dictionaries.
         """
         logger.info("[MigrationPlanner] Step 1: Addressing Anti-Affinity violations.")
-        aa_migrations = []
+        all_aa_migrations_for_return = [] # List to be returned by this method
+        aa_migrations_planned_this_step = [] # Local list for this AA planning pass
 
         # Ensure violations are calculated if not already present
         if not hasattr(self.constraint_manager, 'violations') or not self.constraint_manager.violations:
@@ -471,22 +472,24 @@ class MigrationManager:
             current_host = self.cluster_state.get_host_of_vm(vm_obj)
             logger.info(f"[MigrationPlanner_AA] VM '{vm_obj.name}' violates anti-affinity on host '{current_host.name if current_host else 'Unknown'}'. Finding preferred host.")
             
-            target_host_obj = self.constraint_manager.get_preferred_host_for_vm(vm_obj)
+            # Pass the migrations planned so far *in this AA step*
+            target_host_obj = self.constraint_manager.get_preferred_host_for_vm(
+                vm_obj,
+                planned_migrations_this_cycle=aa_migrations_planned_this_step
+            )
 
             if target_host_obj:
-                # Check anti-affinity safety considering other AA moves planned in this same step.
-                # This check is implicitly handled by get_preferred_host_for_vm if it considers the current state correctly.
-                # However, an explicit check here might be redundant if get_preferred_host_for_vm is robust.
-                # For now, assume get_preferred_host_for_vm finds a valid target from AA perspective.
                 if self._would_fit_on_host(vm_obj, target_host_obj):
-                    aa_migrations.append({'vm': vm_obj, 'target_host': target_host_obj, 'reason': 'Anti-Affinity'})
-                    vms_in_migration_plan.add(vm_obj.name) # Add to set to prevent re-planning
+                    migration_plan = {'vm': vm_obj, 'target_host': target_host_obj, 'reason': 'Anti-Affinity'}
+                    all_aa_migrations_for_return.append(migration_plan)
+                    aa_migrations_planned_this_step.append(migration_plan) # Add to list for next iteration's consideration
+                    vms_in_migration_plan.add(vm_obj.name) # Add to global set passed in
                     logger.info(f"[MigrationPlanner_AA] Planned Anti-Affinity Migration: Move VM '{vm_obj.name}' from '{current_host.name if current_host else 'N/A'}' to '{target_host_obj.name}'.")
                 else:
                     logger.warning(f"[MigrationPlanner_AA] Preferred host '{target_host_obj.name}' for VM '{vm_obj.name}' cannot fit it. No AA migration planned for this VM.")
             else:
                 logger.warning(f"[MigrationPlanner_AA] No suitable preferred host found for anti-affinity violating VM '{vm_obj.name}'.")
-        return aa_migrations
+        return all_aa_migrations_for_return
 
     def _plan_balancing_migrations(self, vms_in_migration_plan,
                                  host_resource_percentages_map_for_decision,
