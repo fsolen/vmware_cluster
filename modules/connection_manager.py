@@ -21,7 +21,7 @@ class ConnectionManager:
         Establishes a secure connection to vCenter
         """
         try:
-            logger.info(f"Connecting to vCenter {self.vcenter_ip}...")
+            logger.info(f"[ConnectionManager] Connecting to vCenter {self.vcenter_ip}...")
 
             # Create an unverified SSL context (ignore SSL certs)
             context = ssl._create_unverified_context()
