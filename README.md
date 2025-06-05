@@ -70,7 +70,7 @@ Runs the full FDRS workflow: first applies anti-affinity rules, then performs re
 python fdrs.py --vcenter <vc_ip_or_hostname> --username <user> --password <pass>
 ```
 
-### Auto Balancing Only (Specific Metrics and Aggressiveness)
+### Auto Balancing Only (Specific Metrics and Aggressiveness and Max Migration Limits)
 
 Focuses only on balancing specified metrics (CPU and Memory in this example) with a specific aggressiveness level (Level 4: Max 10% difference). Anti-affinity rules are not specifically enforced in this mode beyond what `MigrationManager` might consider for placement safety if it were extended to do so.
 
