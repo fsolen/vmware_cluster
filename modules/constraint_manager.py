@@ -6,17 +6,16 @@ class ConstraintManager:
     def __init__(self, cluster_state):
         self.cluster_state = cluster_state
         self.vm_distribution = {}
-        self.violations = [] # Store identified violations
+        self.violations = [] 
 
     def enforce_anti_affinity(self):
-        # Docstring using single quotes to avoid issues
         '''
         Groups VMs by prefix (ignoring last 2 chars).
         This populates self.vm_distribution.
         '''
         logger.info("[ConstraintManager] Grouping VMs by prefix for Anti-Affinity rules...")
         self.vm_distribution = {}
-        all_vms = self.cluster_state.vms # Use direct attribute
+        all_vms = self.cluster_state.vms
 
         if not all_vms:
             logger.info("[ConstraintManager] No VMs found in cluster state.")
