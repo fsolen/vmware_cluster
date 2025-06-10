@@ -296,10 +296,11 @@ class MigrationManager:
         logger.info(f"[MigrationPlanner_SelectVMs] Finally selected {len(selected)} VMs from '{source_host_obj.name}': {[vm.name for vm in selected]}")
         return selected
 
-    def _find_better_host_for_balancing(self, vm_to_move, source_host_obj, all_hosts, imbalanced_resources_details, host_resource_percentages_map, planned_migrations_in_cycle=None):
+    def _find_better_host_for_balancing(self, vm_to_move, source_host_obj, source_host_metrics_pct, primary_imbalanced_resource, all_hosts, imbalanced_resources_details, host_resource_percentages_map, planned_migrations_in_cycle=None):
         """
         Finds a more suitable host for a VM to improve resource balance.
-        Considers host capacity, anti-affinity rules (with planned migrations), and target host load.
+        Considers host capacity, anti-affinity rules (with planned migrations), target host load,
+        and ensures significant improvement for the primary imbalanced resource.
         Uses host_resource_percentages_map for target host metrics.
         planned_migrations_in_cycle is a list of dicts of already planned moves in this cycle.
         """
@@ -321,22 +322,32 @@ class MigrationManager:
                 aa_safe_check_result = self._is_anti_affinity_safe(vm_to_move, target_host_obj, planned_migrations_in_cycle=planned_migrations_in_cycle)
                 logger.debug(f"[MigrationPlanner_FindBetterHost] Anti-affinity check for VM '{vm_to_move.name}' on host '{target_host_obj.name}': {aa_safe_check_result} (ignore_anti_affinity is False).")
                 if not aa_safe_check_result:
-                    # Original log message for skipping is inside _is_anti_affinity_safe if it's not safe.
-                    # Adding one here for clarity of skip action.
                     logger.debug(f"[MigrationPlanner_FindBetterHost] Host '{target_host_obj.name}' skipped for VM '{vm_to_move.name}' due to anti-affinity rules.")
                     continue
             else:
                 logger.debug(f"[MigrationPlanner_FindBetterHost] Anti-affinity check bypassed for VM '{vm_to_move.name}' to host '{target_host_obj.name}' (ignore_anti_affinity is True).")
 
-            score = 0
-            # Get target host's metrics from the provided map
             target_metrics_pct = host_resource_percentages_map.get(target_host_obj.name)
-            
             if not target_metrics_pct:
                  logger.warning(f"[MigrationPlanner_FindBetterHost] Critical: Could not get metrics for target host '{target_host_obj.name}' from provided map {host_resource_percentages_map}. Skipping.")
                  continue
 
-            # Score based on how much it improves balance for imbalanced resources
+            # Ping-pong prevention: Ensure target is significantly better for the primary imbalanced resource
+            if primary_imbalanced_resource and primary_imbalanced_resource in target_metrics_pct and primary_imbalanced_resource in source_host_metrics_pct:
+                general_thresholds = self.load_evaluator.get_thresholds(self.aggressiveness)
+                threshold_for_primary_res = general_thresholds.get(primary_imbalanced_resource, 15.0) # Default if not found
+
+                source_usage = source_host_metrics_pct[primary_imbalanced_resource]
+                target_usage = target_metrics_pct[primary_imbalanced_resource]
+
+                if not (target_usage < source_usage - (threshold_for_primary_res / 3.0)):
+                    logger.debug(f"[MigrationPlanner_FindBetterHost] Target '{target_host_obj.name}' for VM '{vm_to_move.name}' skipped: "
+                                 f"Its usage for primary imbalanced resource '{primary_imbalanced_resource}' ({target_usage:.1f}%) "
+                                 f"is not significantly better than source's ({source_usage:.1f}%) by at least {threshold_for_primary_res / 3.0:.1f}%.")
+                    continue
+
+            score = 0
+            # Score based on how much it improves balance for ALL imbalanced resources
             # Lower utilization on target host for imbalanced resources is better.
             for resource, detail in imbalanced_resources_details.items():
                  if resource in target_metrics_pct:
@@ -585,17 +596,17 @@ class MigrationManager:
             for res_name in problematic_resources_names:
                 res_detail = imbalance_details.get(res_name, {})
                 current_host_usage_for_res = source_host_metrics_pct.get(res_name, 0)
-                max_usage_for_res = res_detail.get('max_usage', -1)
-                avg_usage_for_res = res_detail.get('avg_usage', 0) # Get average usage for the resource
 
-                # If a host's usage is very close to the max (e.g., within 1 percent point, so >= 0.99 of max)
-                # or is the max itself, and is above the average, consider it a contributor.
-                # This also helps if multiple hosts share the exact max usage.
-                # The core idea is to find hosts that are significantly loaded for an imbalanced resource.
-                # Adjusted condition: if current_host_usage_for_res >= max_usage_for_res * 0.95 and current_host_usage_for_res > avg_usage_for_res and current_host_usage_for_res > 0:
-                if current_host_usage_for_res >= max_usage_for_res * 0.95 and current_host_usage_for_res > avg_usage_for_res and current_host_usage_for_res > 0:
+                avg_usage_for_res = res_detail.get('avg_usage', 0)
+                general_thresholds = self.load_evaluator.get_thresholds(self.aggressiveness)
+                threshold_for_res = general_thresholds.get(res_name, 15.0)
+
+                is_significantly_above_average = current_host_usage_for_res > (avg_usage_for_res + threshold_for_res / 2.0)
+                is_one_of_the_most_loaded = current_host_usage_for_res >= res_detail.get('max_usage', current_host_usage_for_res + 1) * 0.95
+
+                if is_significantly_above_average and is_one_of_the_most_loaded and current_host_usage_for_res > 0:
                     host_is_max_usage_contributor = True
-                    reason_str = f"high_usage_for_{res_name} ({current_host_usage_for_res:.1f}%, max={max_usage_for_res:.1f}%, avg={avg_usage_for_res:.1f}%)"
+                    reason_str = f"high_usage_for_{res_name} ({current_host_usage_for_res:.1f}%, max={res_detail.get('max_usage',0):.1f}%, avg={avg_usage_for_res:.1f}%, threshold_margin={threshold_for_res / 2.0:.1f}%)"
                     move_reason_details.append(reason_str)
                     if not resource_hint_for_vm_selection:
                         resource_hint_for_vm_selection = res_name
@@ -625,6 +636,8 @@ class MigrationManager:
                 target_host_obj = self._find_better_host_for_balancing(
                     vm_to_move,
                     source_host_obj,
+                    source_host_metrics_pct, # NEW parameter
+                    resource_hint_for_vm_selection, # NEW parameter (primary imbalanced resource for this VM)
                     all_hosts_objects, # List of actual host objects/dicts
                     active_imbalance_details_for_target_finding,
                     host_resource_percentages_map_for_decision, # The (potentially) simulated map
