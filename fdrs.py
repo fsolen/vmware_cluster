@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import getpass
 import logging
 import sys
 from modules.banner import print_banner
@@ -26,12 +27,13 @@ def parse_args():
     parser = argparse.ArgumentParser(description="FDRS - Fully Distributed Resource Scheduler")
     parser.add_argument("--vcenter", required=True, help="vCenter hostname or IP address")
     parser.add_argument("--username", required=True, help="vCenter username")
-    parser.add_argument("--password", required=True, help="vCenter password")
+    parser.add_argument("--password", default='', help="vCenter password (will prompt if not provided)")
     parser.add_argument("--dry-run", action="store_true", help="Enable dry-run mode")
     parser.add_argument("--aggressiveness", type=int, default=3, choices=range(1, 6), help="Aggressiveness level (1-5)")
     parser.add_argument("--balance", action="store_true", help="Auto-balance the cluster based on selected metrics")
     parser.add_argument("--metrics", type=str, default="cpu,memory,disk,network", help="Comma-separated list of metrics to balance: cpu,memory,disk,network")
     parser.add_argument("--apply-anti-affinity", action="store_true", help="Apply anti-affinity rules only")
+    parser.add_argument("--ignore-anti-affinity", action="store_true", help="Ignore anti-affinity rules for resource balancing.")
     parser.add_argument("--max-migrations",type=int,default=None, help="Maximum total migrations to perform in a single run (default: MigrationManager's internal default)"
     )
 
@@ -40,6 +42,10 @@ def parse_args():
 def main():
     print_banner()
     args = parse_args()
+
+    if not args.password:
+        args.password = getpass.getpass("vCenter Password: ")
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
@@ -70,7 +76,8 @@ def main():
             constraint_manager,
             load_evaluator,
             aggressiveness=args.aggressiveness,
-            max_total_migrations=args.max_migrations
+            max_total_migrations=args.max_migrations,
+            ignore_anti_affinity=args.ignore_anti_affinity
         )
         migrations = migration_planner.plan_migrations()
         if migrations:
@@ -95,7 +102,8 @@ def main():
             constraint_manager,
             load_evaluator,
             aggressiveness=args.aggressiveness,
-            max_total_migrations=args.max_migrations
+            max_total_migrations=args.max_migrations,
+            ignore_anti_affinity=args.ignore_anti_affinity
         )
 
         # Log statistical imbalance for informational purposes
@@ -134,7 +142,8 @@ def main():
         constraint_manager,
         load_evaluator,
         aggressiveness=args.aggressiveness,
-        max_total_migrations=args.max_migrations
+            max_total_migrations=args.max_migrations,
+            ignore_anti_affinity=args.ignore_anti_affinity
     )
 
     # Log statistical imbalance for informational purposes

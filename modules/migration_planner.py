@@ -1,15 +1,15 @@
 import logging
-import logging
 import copy 
 
 logger = logging.getLogger('fdrs')
 
 class MigrationManager:
-    def __init__(self, cluster_state, constraint_manager, load_evaluator, aggressiveness=3, max_total_migrations=20): # Added max_total_migrations
+    def __init__(self, cluster_state, constraint_manager, load_evaluator, aggressiveness=3, max_total_migrations=20, ignore_anti_affinity=False): # Added max_total_migrations and ignore_anti_affinity
         self.cluster_state = cluster_state
         self.constraint_manager = constraint_manager
         self.load_evaluator = load_evaluator
         self.aggressiveness = aggressiveness
+        self.ignore_anti_affinity = ignore_anti_affinity
         # Default to 20 if None is explicitly passed, otherwise use the provided value or the parameter default.
         if max_total_migrations is None:
             self.max_total_migrations = 20 # Internal default
@@ -311,8 +311,12 @@ class MigrationManager:
                 continue
 
             # Pass planned_migrations_in_cycle to the anti-affinity check
-            if not self._is_anti_affinity_safe(vm_to_move, target_host_obj, planned_migrations_in_cycle=planned_migrations_in_cycle):
-                continue
+            if not self.ignore_anti_affinity:
+                if not self._is_anti_affinity_safe(vm_to_move, target_host_obj, planned_migrations_in_cycle=planned_migrations_in_cycle):
+                    logger.debug(f"[MigrationPlanner_FindBetterHost] Host '{target_host_obj.name}' skipped for VM '{vm_to_move.name}' due to anti-affinity rules (ignore_anti_affinity is False).")
+                    continue
+            else:
+                logger.debug(f"[MigrationPlanner_FindBetterHost] Anti-affinity check bypassed for VM '{vm_to_move.name}' to host '{target_host_obj.name}' (ignore_anti_affinity is True).")
 
             score = 0
             # Get target host's metrics from the provided map
