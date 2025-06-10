@@ -118,7 +118,7 @@ python fdrs.py --help
 *             VMFS datastore anti-affinity group logic with namimg pattern
 *             VMFS IO performance balancing
 *   Enhanced vSphere API Integration: Exploring deeper integration with VMware APIs for more advanced features and metrics.
-*             Cluster name switch
+*             Cluster name switch 
 *             Ignore anti-affinity switch
 *             More secure authentication
 *             Select best host and best datastore switch awareness with anti-affinity and performance
