@@ -370,84 +370,81 @@ class MigrationManager:
         logger.info(f"[MigrationPlanner_FindBetterHost] Best balancing target for VM '{vm_to_move.name}' is '{best_target.name}' with score {potential_targets[0]['score']:.2f}.")
         return best_target
 
-    def plan_migrations(self):
+    def plan_migrations(self, anti_affinity_only=False):
         logger.info("[MigrationPlanner] Starting migration planning cycle...")
         migrations = []
-        # Use a set to keep track of VMs already planned to move, to avoid duplicate moves.
-        # Store VM names for simplicity, assuming names are unique identifiers.
         vms_in_migration_plan = set()
 
-        # Get initial host resource percentages map and lists from LoadEvaluator
-        initial_host_resource_percentages_map = {}
-        if hasattr(self.load_evaluator, 'get_all_host_resource_percentages_map'):
-            initial_host_resource_percentages_map = self.load_evaluator.get_all_host_resource_percentages_map()
-            logger.debug(f"[MigrationPlanner] Fetched initial host_resource_percentages_map from LoadEvaluator.")
-        else:
-            logger.error("[MigrationPlanner] Critical: self.load_evaluator.get_all_host_resource_percentages_map() not found. Balancing will be severely impaired.")
-            initial_host_resource_percentages_map = {}
-
-        # These are needed for fallback if simulation for disk/net is not possible
-        # and also as a base for _get_simulated_load_lists_after_migrations if it needs them.
-        # This call might be redundant if _get_simulated_load_lists_after_migrations fetches them itself, which it does now.
-        # initial_cpu_p_list, initial_mem_p_list, initial_disk_p_list, initial_net_p_list = self.load_evaluator.get_resource_percentage_lists()
-
-        # Step 1: Addressing Anti-Affinity violations
+        # Step 1: Addressing Anti-Affinity violations (always done if plan_migrations is called)
         anti_affinity_migrations = self._plan_anti_affinity_migrations(vms_in_migration_plan)
         migrations.extend(anti_affinity_migrations)
         logger.info(f"[MigrationPlanner] After Anti-Affinity, {len(anti_affinity_migrations)} migrations planned.")
 
-        # Current load map and lists reflect the state *after* AA migrations for balancing decisions
-        current_host_resource_percentages_map = initial_host_resource_percentages_map
-        # Initialize override lists. If no AA migrations, these will be None, and LoadEvaluator will use its internal lists.
-        sim_cpu_p_override, sim_mem_p_override, sim_disk_p_override, sim_net_p_override = None, None, None, None
+        if not anti_affinity_only:
+            logger.info("[MigrationPlanner] Proceeding to resource balancing phase...")
 
-        if anti_affinity_migrations:
-            logger.info("[MigrationPlanner] Simulating anti-affinity migrations to re-evaluate load balance...")
-            sim_cpu_p_override, sim_mem_p_override, sim_disk_p_override, sim_net_p_override, simulated_load_map_after_aa = \
-                self._get_simulated_load_data_after_migrations(anti_affinity_migrations) # Removed initial_host_load_map from call
-            current_host_resource_percentages_map = simulated_load_map_after_aa
-            logger.info("[MigrationPlanner] Load balance re-evaluation will use simulated state after AA migrations.")
+            # Fetch initial host resource percentages map from LoadEvaluator for balancing decisions
+            initial_host_resource_percentages_map = {}
+            if hasattr(self.load_evaluator, 'get_all_host_resource_percentages_map'):
+                initial_host_resource_percentages_map = self.load_evaluator.get_all_host_resource_percentages_map()
+                logger.debug(f"[MigrationPlanner] Fetched initial host_resource_percentages_map from LoadEvaluator for balancing.")
+            else:
+                logger.error("[MigrationPlanner] Critical: self.load_evaluator.get_all_host_resource_percentages_map() not found. Balancing will be severely impaired.")
+                # No need to assign to {} as it's already initialized.
+
+            current_host_resource_percentages_map = initial_host_resource_percentages_map
+            sim_cpu_p_override, sim_mem_p_override, sim_disk_p_override, sim_net_p_override = None, None, None, None
+
+            # Simulate AA migrations only if they occurred AND we are doing balancing
+            if anti_affinity_migrations:
+                logger.info("[MigrationPlanner] Simulating anti-affinity migrations to re-evaluate load balance for balancing step...")
+                sim_cpu_p_override, sim_mem_p_override, sim_disk_p_override, sim_net_p_override, simulated_load_map_after_aa = \
+                    self._get_simulated_load_data_after_migrations(anti_affinity_migrations)
+                current_host_resource_percentages_map = simulated_load_map_after_aa
+                logger.info("[MigrationPlanner] Load balance re-evaluation for balancing will use simulated state after AA migrations.")
+            else:
+                logger.info("[MigrationPlanner] No anti-affinity migrations to simulate, proceeding with initial load state for balancing.")
+
+            # Step 2: Addressing Resource Imbalance
+            balancing_migrations = self._plan_balancing_migrations(
+                vms_in_migration_plan,
+                current_host_resource_percentages_map,
+                migrations, # Pass all migrations so far (AA)
+                sim_cpu_p_override,
+                sim_mem_p_override,
+                sim_disk_p_override,
+                sim_net_p_override
+            )
+            migrations.extend(balancing_migrations)
+            logger.info(f"[MigrationPlanner] After Resource Balancing, {len(balancing_migrations)} balancing migrations planned. Total migrations now: {len(migrations)} (AA + Balancing).")
         else:
-            logger.info("[MigrationPlanner] No anti-affinity migrations, proceeding with initial load state for balancing.")
+            logger.info("[MigrationPlanner] Anti-affinity only mode: Skipping resource balancing phase.")
 
-        # Step 2: Addressing Resource Imbalance, using potentially simulated state
-        # Pass the override lists to evaluate_imbalance via _plan_balancing_migrations
-        balancing_migrations = self._plan_balancing_migrations(
-            vms_in_migration_plan,
-            current_host_resource_percentages_map, # This is the (potentially simulated) map
-            migrations, # Pass all migrations so far (AA + any prior balancing if iterative in future)
-            sim_cpu_p_override, # Pass simulated lists for evaluate_imbalance
-            sim_mem_p_override,
-            sim_disk_p_override,
-            sim_net_p_override
-        )
-        migrations.extend(balancing_migrations)
-
-        logger.info(f"[MigrationPlanner] After Resource Balancing, {len(migrations)} total migrations planned.")
-
-        # Enforce overall migration limit (Part 2)
+        # Enforce overall migration limit (This applies to both modes)
+        final_limited_migrations = [] # Define final_limited_migrations before potential use
         if len(migrations) > self.max_total_migrations:
             logger.warning(f"[MigrationPlanner] Planned migrations ({len(migrations)}) exceed max limit ({self.max_total_migrations}). Truncating.")
             # Prioritize Anti-Affinity migrations
-            final_limited_migrations = []
+            # final_limited_migrations already initialized
             aa_migs_from_plan = [m for m in migrations if m.get('reason') == 'Anti-Affinity']
-            balance_migs_from_plan = [m for m in migrations if m.get('reason') != 'Anti-Affinity'] # Crude, refine if more reasons
+            # Exclude AA migrations to get only balancing ones, or any other type if reasons become more diverse
+            balance_migs_from_plan = [m for m in migrations if m.get('reason') != 'Anti-Affinity']
 
             if len(aa_migs_from_plan) >= self.max_total_migrations:
-                final_limited_migrations = aa_migs_from_plan[:self.max_total_migrations]
-                logger.info(f"[MigrationPlanner] Truncated to only {len(final_limited_migrations)} anti-affinity migrations.")
+                final_limited_migrations.extend(aa_migs_from_plan[:self.max_total_migrations])
+                logger.info(f"[MigrationPlanner] Truncated to only {len(final_limited_migrations)} anti-affinity migrations as they met/exceeded the limit.")
             else:
                 final_limited_migrations.extend(aa_migs_from_plan)
                 remaining_slots = self.max_total_migrations - len(final_limited_migrations)
                 if remaining_slots > 0 and balance_migs_from_plan:
                     final_limited_migrations.extend(balance_migs_from_plan[:remaining_slots])
-                    logger.info(f"[MigrationPlanner] Took all {len(aa_migs_from_plan)} AA migrations and {len(balance_migs_from_plan[:remaining_slots])} balancing migrations.")
-                else:
-                     logger.info(f"[MigrationPlanner] Only anti-affinity migrations included after limit. Count: {len(final_limited_migrations)}")
+                    logger.info(f"[MigrationPlanner] Took all {len(aa_migs_from_plan)} AA migrations and {len(balance_migs_from_plan[:remaining_slots])} balancing migrations to meet limit.")
+                elif remaining_slots == 0:
+                     logger.info(f"[MigrationPlanner] Only anti-affinity migrations included as they exactly met the limit. Count: {len(final_limited_migrations)}")
+                # If remaining_slots < 0 (should not happen due to outer if) or balance_migs_from_plan is empty, this path is also covered.
 
-            migrations = final_limited_migrations
-            logger.info(f"[MigrationPlanner] Final migration count after truncation: {len(migrations)}")
-
+            migrations = final_limited_migrations # Assign the (potentially) truncated list back
+            logger.info(f"[MigrationPlanner] Final migration count after truncation (if any): {len(migrations)}")
 
         if not migrations:
             logger.info("[MigrationPlanner] No migrations planned in this cycle.")

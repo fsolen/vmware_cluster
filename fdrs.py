@@ -79,7 +79,7 @@ def main():
             max_total_migrations=args.max_migrations,
             ignore_anti_affinity=args.ignore_anti_affinity
         )
-        migrations = migration_planner.plan_migrations()
+        migrations = migration_planner.plan_migrations(anti_affinity_only=True)
         if migrations:
             scheduler = Scheduler(connection_manager, dry_run=args.dry_run)
             scheduler.execute_migrations(migrations)
