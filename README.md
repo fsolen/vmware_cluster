@@ -112,13 +112,13 @@ python fdrs.py --help
 
 ---
 
-## Roadmap
+### Roadmap
 
-*   FDSS (Fully Dynamic Storage Scheduler): Potential future development for storage-specific dynamic scheduling.
-*             VMFS datastore anti-affinity group logic with namimg pattern
-*             VMFS IO performance balancing
-*   Enhanced vSphere API Integration: Exploring deeper integration with VMware APIs for more advanced features and metrics.
-*             Cluster name switch 
-*             Ignore anti-affinity switch
-*             More secure authentication
-*             Select best host and best datastore switch awareness with anti-affinity and performance
+- **FDSS (Fully Dynamic Storage Scheduler) Potential future development for storage-specific dynamic scheduling.**:
+    - VMFS datastore anti-affinity group logic with namimg pattern
+    - VMFS IO performance balancing
+- **Enhanced vSphere API Integration: Exploring deeper integration with VMware APIs for more advanced features and metrics.**:
+    - Cluster name switch
+    - Ignore anti-affinity switch
+    - Select best host and best datastore switch awareness with anti-affinity and performance
+    - Password input optimization
