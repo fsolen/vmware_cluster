@@ -86,6 +86,14 @@ This command *only* evaluates and enforces anti-affinity rules, making any neces
 python fdrs.py --vcenter <vc_ip_or_hostname> --username <user> --password <pass> --apply-anti-affinity
 ```
 
+### Apply Resource Balancing Only
+
+This command *only* evaluates and enforces anti-affinity rules, making any necessary migrations to satisfy them. Resource balancing is not performed.
+
+```bash
+python fdrs.py --vcenter <vc_ip_or_hostname> --username <user> --password <pass> --ignore-anti-affinity
+```
+
 ### Dry Run (Simulate Changes)
 
 To see what migrations FDRS would perform without actually making any changes, add the `--dry-run` flag to any command:
